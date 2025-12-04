@@ -4,7 +4,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.keras.layers import Layer
 from catboost import CatBoostClassifier
-from sklearn.metrics import accuracy_score, mean_absolute_error, mean_squared_error
+from sklearn.metrics import accuracy_score, mean_absolute_error, mean_squared_error, classification_report
 from sklearn.model_selection import train_test_split
 import joblib
 import plotly.graph_objects as go
@@ -86,9 +86,6 @@ def load_artifacts():
 # ==========================================
 # 3. METRIC CALCULATION HELPERS
 # ==========================================
-# ... (Imports remain the same) ...
-
-# UPDATE THIS FUNCTION
 @st.cache_data
 def calculate_global_accuracy(_model, df, _encoders):
     # 1. Prepare Data
@@ -123,7 +120,7 @@ def calculate_global_accuracy(_model, df, _encoders):
     
     daily.dropna(inplace=True)
     
-    # 2. Test Split (20%)
+    # 2. Test Split (20% sample for speed)
     _, test_df = train_test_split(daily, test_size=0.2, random_state=42, stratify=daily['AQI_Target'])
     
     features = []
@@ -147,12 +144,18 @@ def calculate_global_accuracy(_model, df, _encoders):
     
     # Convert to clean DataFrame
     report_df = pd.DataFrame(report_dict).transpose()
-    # Filter only the classes (0,1,2,3) and rename them
-    classes_only = report_df.loc[['0', '1', '2', '3']]
-    classes_only.index = AQI_LABELS # Rename 0->Good, 1->Moderate...
+    # Filter only the classes (0,1,2,3)
+    target_indices = [str(i) for i in range(len(AQI_LABELS))]
+    available_indices = [i for i in target_indices if i in report_df.index]
     
-    # Keep only relevant columns
-    classes_only = classes_only[['precision', 'recall', 'f1-score', 'support']]
+    if available_indices:
+        classes_only = report_df.loc[available_indices].copy()
+        # Rename index to text labels
+        rename_map = {str(i): label for i, label in enumerate(AQI_LABELS)}
+        classes_only.rename(index=rename_map, inplace=True)
+        classes_only = classes_only[['precision', 'recall', 'f1-score', 'support']]
+    else:
+        classes_only = pd.DataFrame()
     
     return acc, classes_only
 
@@ -192,9 +195,7 @@ def calculate_city_metrics(city, df, _lstm, _trans, _scaler):
     if test_size < 1: return None, None
     
     X, Y = [], []
-    # Start loop from end - test_size
-    start_idx = len(data_scaled) - test_size - SEQUENCE_LENGTH - FORECAST_HORIZON
-    if start_idx < 0: start_idx = 0
+    start_idx = max(0, len(data_scaled) - test_size - SEQUENCE_LENGTH - FORECAST_HORIZON)
     
     for i in range(start_idx, len(data_scaled) - SEQUENCE_LENGTH - FORECAST_HORIZON + 1):
         X.append(data_scaled[i : i + SEQUENCE_LENGTH])
@@ -209,7 +210,7 @@ def calculate_city_metrics(city, df, _lstm, _trans, _scaler):
     lstm_pred = _lstm.predict(X, verbose=0)
     trans_pred = _trans.predict(X, verbose=0)
     
-    # Helper for inverse (handling 16 features shape)
+    # Helper for inverse
     def get_actuals(preds):
         dummy = np.zeros((preds.shape[0] * preds.shape[1], 16))
         dummy[:, 0:2] = preds.reshape(-1, 2)
@@ -223,7 +224,6 @@ def calculate_city_metrics(city, df, _lstm, _trans, _scaler):
     # Metrics
     lstm_mae = mean_absolute_error(y_true_flat, lstm_flat)
     lstm_rmse = np.sqrt(mean_squared_error(y_true_flat, lstm_flat))
-    
     trans_mae = mean_absolute_error(y_true_flat, trans_flat)
     trans_rmse = np.sqrt(mean_squared_error(y_true_flat, trans_flat))
     
@@ -283,7 +283,7 @@ def get_dl_sequence(daily_df, scaler):
 # 5. MAIN APP UI
 # ==========================================
 st.title("⚡ SmogCast: Instant Air Quality AI")
-st.markdown("### Pre-trained Models: CatBoost (classification) | LSTM & Transformer (Forecast)")
+st.markdown("### Pre-trained Models: CatBoost (Status) | LSTM & Transformer (Forecast)")
 
 # Load Everything
 with st.spinner("Loading AI Brains..."):
@@ -294,8 +294,12 @@ if isinstance(encoders, str):
     st.stop()
 
 # Load Data
-raw_df = pd.read_csv(FILE_PATH)
-cities = sorted(raw_df['City'].unique())
+try:
+    raw_df = pd.read_csv(FILE_PATH)
+    cities = sorted(raw_df['City'].unique())
+except Exception as e:
+    st.error(f"Could not load data: {e}")
+    st.stop()
 
 # Controls
 col1, col2 = st.columns([1, 3])
@@ -308,10 +312,8 @@ with col1:
     st.markdown("---")
     st.markdown("### Model Performance")
     
-    # Check session state for both accuracy AND the report
     if 'global_acc' not in st.session_state:
-        with st.spinner("Calculating Metrics..."):
-            # Unpack both return values
+        with st.spinner("Calculating Accuracy..."):
             acc, report_df = calculate_global_accuracy(cb_model, raw_df.copy(), encoders)
             st.session_state['global_acc'] = acc
             st.session_state['class_report'] = report_df
@@ -319,12 +321,14 @@ with col1:
     st.metric("Global Accuracy", f"{st.session_state['global_acc']*100:.2f}%")
     
     with st.expander("See Class-wise Accuracy"):
-        # Format the dataframe to look like percentages
-        st.dataframe(
-            st.session_state['class_report'].style.format("{:.2%}", subset=['precision', 'recall', 'f1-score']),
-            use_container_width=True
-        )
-        
+        if not st.session_state['class_report'].empty:
+            st.dataframe(
+                st.session_state['class_report'].style.format("{:.2%}", subset=['precision', 'recall', 'f1-score']),
+                use_container_width=True
+            )
+        else:
+            st.write("Report not available.")
+
 with col2:
     if run_btn:
         daily_data = prep_data_for_prediction(raw_df, selected_city)
