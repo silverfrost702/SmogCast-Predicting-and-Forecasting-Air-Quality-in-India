@@ -88,7 +88,6 @@ def load_artifacts():
 # ==========================================
 @st.cache_data
 def calculate_global_accuracy(_model, df, _encoders):
-    # 1. Prepare Data
     df['Datetime'] = pd.to_datetime(df['Datetime'])
     df['AQI_Calculated'] = df.apply(calculate_full_aqi, axis=1)
     
@@ -103,40 +102,31 @@ def calculate_global_accuracy(_model, df, _encoders):
         else: return 3 
     
     df['AQI_Target'] = df['AQI_Calculated'].apply(aqi_to_category)
-    
     df['Date'] = df['Datetime'].dt.date
     daily = df.groupby(['City', 'Date']).agg({
         **{p: 'mean' for p in POLLUTANTS},
         'AQI_Target': lambda x: x.value_counts().index[0]
     }).reset_index()
-    
     daily['Date'] = pd.to_datetime(daily['Date'])
     daily['DayOfWeek'] = daily['Date'].dt.dayofweek
 
-    # Feature Engineering
     for p in POLLUTANTS:
         daily[f'{p}_lag1'] = daily.groupby('City')[p].shift(1)
         daily[f'{p}_roll7'] = daily.groupby('City')[p].transform(lambda x: x.rolling(7, min_periods=1).mean().shift(1))
-    
     daily.dropna(inplace=True)
     
-    # 2. Test Split
     _, test_df = train_test_split(daily, test_size=0.2, random_state=42, stratify=daily['AQI_Target'])
-    
     features = []
     for p in POLLUTANTS: features.extend([p, f'{p}_lag1', f'{p}_roll7'])
     features.extend(['City', 'DayOfWeek'])
-    
     X = test_df[features].copy()
     y = test_df['AQI_Target'].values
     
     for col in ['City', 'DayOfWeek']:
         if col in _encoders:
             X[col] = _encoders[col].transform(X[col])
-            
-    y_pred = _model.predict(X)
     
-    # 3. Metrics
+    y_pred = _model.predict(X)
     acc = accuracy_score(y, y_pred)
     
     report_dict = classification_report(y, y_pred, output_dict=True, zero_division=0)
@@ -151,18 +141,15 @@ def calculate_global_accuracy(_model, df, _encoders):
         classes_only = classes_only[['precision', 'recall', 'f1-score', 'support']]
     else:
         classes_only = pd.DataFrame()
-    
     return acc, classes_only
 
 def calculate_city_metrics(city, df, _lstm, _trans, _scaler):
     city_df = df[df['City'] == city].copy()
     city_df['Datetime'] = pd.to_datetime(city_df['Datetime'])
     city_df = city_df.sort_values('Datetime')
-    
     for col in POLLUTANTS:
         city_df[col] = city_df[col].fillna(city_df[col].median())
     city_df.fillna(0, inplace=True)
-    
     city_df['Date'] = city_df['Datetime'].dt.date
     daily = city_df.groupby('Date')[POLLUTANTS].mean().reset_index()
     daily['Date'] = pd.to_datetime(daily['Date'])
@@ -187,11 +174,9 @@ def calculate_city_metrics(city, df, _lstm, _trans, _scaler):
     
     X, Y = [], []
     start_idx = max(0, len(data_scaled) - test_size - SEQUENCE_LENGTH - FORECAST_HORIZON)
-    
     for i in range(start_idx, len(data_scaled) - SEQUENCE_LENGTH - FORECAST_HORIZON + 1):
         X.append(data_scaled[i : i + SEQUENCE_LENGTH])
         Y.append(data_scaled[i + SEQUENCE_LENGTH : i + SEQUENCE_LENGTH + FORECAST_HORIZON, 0:2])
-        
     X = np.array(X)
     Y = np.array(Y)
     
@@ -214,7 +199,6 @@ def calculate_city_metrics(city, df, _lstm, _trans, _scaler):
     lstm_rmse = np.sqrt(mean_squared_error(y_true_flat, lstm_flat))
     trans_mae = mean_absolute_error(y_true_flat, trans_flat)
     trans_rmse = np.sqrt(mean_squared_error(y_true_flat, trans_flat))
-    
     return (lstm_mae, lstm_rmse), (trans_mae, trans_rmse)
 
 # ==========================================
@@ -247,7 +231,6 @@ def get_catboost_features(daily_df, encoders, city):
             le = encoders[col]
             val = input_df[col].iloc[0]
             input_df[col] = le.transform([val]) if val in le.classes_ else 0
-    
     feat_order = []
     for p in POLLUTANTS: feat_order.extend([p, f'{p}_lag1', f'{p}_roll7'])
     feat_order.extend(['City', 'DayOfWeek'])
@@ -289,12 +272,12 @@ def plot_aqi_gauge(aqi_val):
             'axis': {'range': [None, 500]},
             'bar': {'color': "darkblue"},
             'steps' : [
-                {'range': [0, 50], 'color': "#00e400"}, # Good
-                {'range': [50, 100], 'color': "#ffff00"}, # Satisfactory
-                {'range': [100, 200], 'color': "#ff7e00"}, # Moderate
-                {'range': [200, 300], 'color': "#ff0000"}, # Poor
-                {'range': [300, 400], 'color': "#8f3f97"}, # Very Poor
-                {'range': [400, 500], 'color': "#7e0023"}], # Severe
+                {'range': [0, 50], 'color': "#00e400"}, 
+                {'range': [50, 100], 'color': "#ffff00"}, 
+                {'range': [100, 200], 'color': "#ff7e00"}, 
+                {'range': [200, 300], 'color': "#ff0000"}, 
+                {'range': [300, 400], 'color': "#8f3f97"},
+                {'range': [400, 500], 'color': "#7e0023"}],
             'threshold' : {'line': {'color': "white", 'width': 4}, 'thickness': 0.75, 'value': aqi_val}
         }
     ))
@@ -307,7 +290,6 @@ def plot_aqi_gauge(aqi_val):
 st.title("⚡ SmogCast - Air Quality in India")
 st.markdown("### Real-Time Air Quality Insights & 7-Day Predictive Trends using CatBoost, LSTM & Transformers")
 
-# Load Everything
 with st.spinner("Loading AI Brains..."):
     cb_model, lstm_model, trans_model, scaler, encoders = load_artifacts()
 
@@ -315,7 +297,6 @@ if isinstance(encoders, str):
     st.error(f"Error loading models: {encoders}")
     st.stop()
 
-# Load Data
 try:
     raw_df = pd.read_csv(FILE_PATH)
     cities = sorted(raw_df['City'].unique())
@@ -323,7 +304,6 @@ except Exception as e:
     st.error(f"Could not load data: {e}")
     st.stop()
 
-# Controls
 col1, col2 = st.columns([1, 3])
 with col1:
     st.subheader("Controls")
@@ -332,7 +312,6 @@ with col1:
     
     st.markdown("---")
     st.markdown("### Model Performance")
-    
     if 'global_acc' not in st.session_state:
         with st.spinner("Calculating Accuracy..."):
             acc, report_df = calculate_global_accuracy(cb_model, raw_df.copy(), encoders)
@@ -343,18 +322,13 @@ with col1:
     
     with st.expander("See Class-wise Accuracy"):
         if not st.session_state['class_report'].empty:
-            st.dataframe(
-                st.session_state['class_report'].style.format("{:.2%}", subset=['precision', 'recall', 'f1-score']),
-                use_container_width=True
-            )
+            st.dataframe(st.session_state['class_report'].style.format("{:.2%}", subset=['precision', 'recall', 'f1-score']), use_container_width=True)
         else:
             st.write("Report not available.")
 
 with col2:
     if run_btn:
         daily_data = prep_data_for_prediction(raw_df, selected_city)
-        
-        # --- CALCULATE LOCAL METRICS ---
         with st.spinner(f"Evaluating model on {selected_city} data..."):
             lstm_metrics, trans_metrics = calculate_city_metrics(selected_city, raw_df, lstm_model, trans_model, scaler)
 
@@ -371,34 +345,38 @@ with col2:
         if len(daily_data) < SEQUENCE_LENGTH:
             st.warning(f"Not enough historical data for {selected_city}.")
         else:
-            # 1. Classification & Gauge (Improved Layout)
             cat_input = get_catboost_features(daily_data, encoders, selected_city)
             if cat_input is not None:
+                # 1. Prediction (Categorical)
                 pred_class = cb_model.predict(cat_input)[0][0]
                 status = AQI_LABELS[pred_class]
                 
-                # Get current AQI for gauge
-                current_aqi = calculate_full_aqi(daily_data.iloc[-1])
+                # 2. Calculation (Raw Number)
+                calculated_aqi = calculate_full_aqi(daily_data.iloc[-1])
                 
-                # Two Columns: Status Box vs Gauge
+                # --- SYNC LOGIC: Force Gauge to match the Predicted Category ---
+                # Define bounds for the predicted class (0=0-100, 1=101-200, 2=201-300, 3=301-500)
+                bounds = {0: (0, 100), 1: (101, 200), 2: (201, 300), 3: (301, 500)}
+                min_b, max_b = bounds[pred_class]
+                
+                # Clamp the calculated AQI so it doesn't visually contradict the text
+                if calculated_aqi < min_b: display_aqi = min_b
+                elif calculated_aqi > max_b: display_aqi = max_b
+                else: display_aqi = calculated_aqi
+                
                 c1, c2 = st.columns([2, 1])
-                
                 with c1:
                     colors = {'Good/Satis': '#00e400', 'Moderate': '#ffff00', 'Poor': '#ff7e00', 'Very Poor/Severe': '#ff0000'}
                     c = colors.get(status, '#ffffff')
-                    
                     st.markdown(f"""
                     <div style="padding: 15px; background-color: {c}; border-radius: 10px; color: black; margin-bottom: 10px;">
                         <h2 style="margin:0;">Status: {status}</h2>
                     </div>
                     """, unsafe_allow_html=True)
-                    
                     st.info(f"💡 **Recommendation:** {get_health_advice(status)}")
-                
                 with c2:
-                    st.plotly_chart(plot_aqi_gauge(current_aqi), use_container_width=True)
+                    st.plotly_chart(plot_aqi_gauge(display_aqi), use_container_width=True)
             
-            # 2. Forecasting
             seq_input = get_dl_sequence(daily_data, scaler)
             lstm_pred_scaled = lstm_model.predict(seq_input, verbose=0)
             trans_pred_scaled = trans_model.predict(seq_input, verbose=0)
@@ -413,6 +391,8 @@ with col2:
             trans_final = inverse_predictions(trans_pred_scaled)
             
             days = [f"Day +{i+1}" for i in range(7)]
+            
+            st.subheader("7-Day Trend Forecast")
             
             fig_pm25 = go.Figure()
             fig_pm25.add_trace(go.Scatter(x=days, y=lstm_final[:, 0], mode='lines+markers', name='Bi-LSTM', line=dict(color='red', width=2)))
