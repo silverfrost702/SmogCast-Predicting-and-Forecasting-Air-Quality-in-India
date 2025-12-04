@@ -287,7 +287,7 @@ def plot_aqi_gauge(aqi_val):
 # ==========================================
 # 6. MAIN APP UI
 # ==========================================
-st.title("⚡ SmogCast - Air Quality in India")
+st.title("SmogCast - Air Quality in India")
 st.markdown("### Real-Time Air Quality Insights & 7-Day Predictive Trends using CatBoost, LSTM & Transformers")
 
 with st.spinner("Loading AI Brains..."):
@@ -373,7 +373,7 @@ with col2:
                         <h2 style="margin:0;">Status: {status}</h2>
                     </div>
                     """, unsafe_allow_html=True)
-                    st.info(f"💡 **Recommendation:** {get_health_advice(status)}")
+                    st.info(f" **Recommendation:** {get_health_advice(status)}")
                 with c2:
                     st.plotly_chart(plot_aqi_gauge(display_aqi), use_container_width=True)
             
@@ -406,4 +406,4 @@ with col2:
             fig_pm10.update_layout(title=f"PM10 Forecast", yaxis_title="µg/m³", template="plotly_dark")
             st.plotly_chart(fig_pm10, use_container_width=True)
     else:
-        st.info("👈 Select a city and click 'Generate Forecast'")
+        st.info("⬅ Select a city and click 'Generate Forecast'")
