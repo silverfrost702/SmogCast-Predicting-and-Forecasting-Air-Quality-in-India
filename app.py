@@ -26,7 +26,8 @@ FILE_PATH = 'city_hour.csv'
 FORECAST_HORIZON = 7 
 SEQUENCE_LENGTH = 45 
 BATCH_SIZE = 32
-EPOCHS = 30  # Adjusted for demo speed
+# SPEED OPTIMIZATION: Reduced epochs to 10 for faster cloud performance
+EPOCHS = 10 
 RANDOM_SEED = 42
 POLLUTANTS = ['PM2.5', 'PM10', 'NO', 'NO2', 'NOx', 'NH3', 'CO', 'SO2', 'O3', 'Benzene', 'Toluene', 'Xylene']
 CAT_FEATURES = ['City'] 
@@ -76,7 +77,7 @@ def calculate_full_aqi(row):
     return max(sub_indices) if sub_indices else 0.0
 
 # ==============================================================================
-# Cached Data Processing Functions
+# Cached Data Processing Functions (FIXED)
 # ==============================================================================
 
 @st.cache_data
@@ -92,8 +93,15 @@ def prepare_classification_data(df):
     df['Datetime'] = pd.to_datetime(df['Datetime'])
     df['AQI_Calculated'] = df.apply(calculate_full_aqi, axis=1)
     
+    # 1. Try filling with median
     for col in POLLUTANTS + ['AQI_Calculated']:
         df[col] = df.groupby('City')[col].transform(lambda x: x.fillna(x.median()))
+    
+    # --- CRITICAL FIX START ---
+    # 2. If a city has NO data for a chemical (median is NaN), fill with 0.
+    # This prevents dropna() from deleting the whole city.
+    df.fillna(0, inplace=True)
+    # --- CRITICAL FIX END ---
     
     def aqi_to_category(aqi):
         if aqi <= 100: return 0 
@@ -131,6 +139,8 @@ def prepare_forecasting_data(df, target_city):
     city_df['Datetime'] = pd.to_datetime(city_df['Datetime'])
     city_df = city_df.sort_values('Datetime').reset_index(drop=True)
     city_df[POLLUTANTS] = city_df[POLLUTANTS].ffill()
+    # Safety fill for forecasting as well
+    city_df[POLLUTANTS] = city_df[POLLUTANTS].fillna(0)
     city_df = city_df.dropna(subset=POLLUTANTS)
     
     city_df['DayOfYear'] = city_df['Datetime'].dt.dayofyear
@@ -259,7 +269,7 @@ def train_transformer(_X_train, _Y_train, _X_val, _Y_val, input_shape):
     return model
 
 # ==============================================================================
-# UI Implementation
+# UI Implementation (FIXED: Safe Logic for Status)
 # ==============================================================================
 
 st.title("🏭 Air Quality Forecasting & Classification")
@@ -288,14 +298,11 @@ if df is not None:
         
         st.metric("Model Test Accuracy", f"{acc*100:.2f}%")
         
-        # --- FIXED SECTION START ---
-        # 1. Filter first (do not use .iloc yet)
+        # FIXED LOGIC: Filter first, then check empty, then access iloc
         city_subset = daily_df_class[daily_df_class['City'] == selected_city]
         
-        # 2. Check if the subset has data
         if not city_subset.empty:
-            # 3. NOW it is safe to grab the last row
-            city_latest = city_subset.iloc[[-1]]
+            city_latest = city_subset.iloc[[-1]] # Safe to access now
             
             features = POLLUTANTS + lag_feats + CAT_FEATURES + ['DayOfWeek']
             X_latest = city_latest[features].copy()
@@ -312,8 +319,7 @@ if df is not None:
             
             st.markdown(f"**Current Estimated Status for {selected_city}:** <span style='color:{color_map.get(status_text, 'black')}; font-size:1.2em; font-weight:bold'>{status_text}</span>", unsafe_allow_html=True)
         else:
-            st.warning(f"Insufficient data to classify current status for {selected_city}.")
-        # --- FIXED SECTION END ---
+            st.warning(f"No sufficient data found for {selected_city} to predict current status.")
 
         # --- PART 2: FORECASTING ---
         st.divider()
