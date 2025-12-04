@@ -288,8 +288,15 @@ if df is not None:
         
         st.metric("Model Test Accuracy", f"{acc*100:.2f}%")
         
-        city_latest = daily_df_class[daily_df_class['City'] == selected_city].iloc[[-1]]
-        if not city_latest.empty:
+        # --- FIXED SECTION START ---
+        # 1. Filter first (do not use .iloc yet)
+        city_subset = daily_df_class[daily_df_class['City'] == selected_city]
+        
+        # 2. Check if the subset has data
+        if not city_subset.empty:
+            # 3. NOW it is safe to grab the last row
+            city_latest = city_subset.iloc[[-1]]
+            
             features = POLLUTANTS + lag_feats + CAT_FEATURES + ['DayOfWeek']
             X_latest = city_latest[features].copy()
             for col in CAT_FEATURES + ['DayOfWeek']:
@@ -305,7 +312,8 @@ if df is not None:
             
             st.markdown(f"**Current Estimated Status for {selected_city}:** <span style='color:{color_map.get(status_text, 'black')}; font-size:1.2em; font-weight:bold'>{status_text}</span>", unsafe_allow_html=True)
         else:
-            st.warning("Insufficient data for classification prediction.")
+            st.warning(f"Insufficient data to classify current status for {selected_city}.")
+        # --- FIXED SECTION END ---
 
         # --- PART 2: FORECASTING ---
         st.divider()
