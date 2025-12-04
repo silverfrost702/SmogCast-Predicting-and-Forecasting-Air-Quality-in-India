@@ -120,7 +120,7 @@ def calculate_global_accuracy(_model, df, _encoders):
     
     daily.dropna(inplace=True)
     
-    # 2. Test Split (20% sample for speed)
+    # 2. Test Split
     _, test_df = train_test_split(daily, test_size=0.2, random_state=42, stratify=daily['AQI_Target'])
     
     features = []
@@ -136,21 +136,16 @@ def calculate_global_accuracy(_model, df, _encoders):
             
     y_pred = _model.predict(X)
     
-    # 3. Calculate Overall Accuracy
+    # 3. Metrics
     acc = accuracy_score(y, y_pred)
     
-    # 4. Calculate Class-Wise Report
     report_dict = classification_report(y, y_pred, output_dict=True, zero_division=0)
-    
-    # Convert to clean DataFrame
     report_df = pd.DataFrame(report_dict).transpose()
-    # Filter only the classes (0,1,2,3)
     target_indices = [str(i) for i in range(len(AQI_LABELS))]
     available_indices = [i for i in target_indices if i in report_df.index]
     
     if available_indices:
         classes_only = report_df.loc[available_indices].copy()
-        # Rename index to text labels
         rename_map = {str(i): label for i, label in enumerate(AQI_LABELS)}
         classes_only.rename(index=rename_map, inplace=True)
         classes_only = classes_only[['precision', 'recall', 'f1-score', 'support']]
@@ -164,12 +159,10 @@ def calculate_city_metrics(city, df, _lstm, _trans, _scaler):
     city_df['Datetime'] = pd.to_datetime(city_df['Datetime'])
     city_df = city_df.sort_values('Datetime')
     
-    # Fill
     for col in POLLUTANTS:
         city_df[col] = city_df[col].fillna(city_df[col].median())
     city_df.fillna(0, inplace=True)
     
-    # Daily
     city_df['Date'] = city_df['Datetime'].dt.date
     daily = city_df.groupby('Date')[POLLUTANTS].mean().reset_index()
     daily['Date'] = pd.to_datetime(daily['Date'])
@@ -177,7 +170,6 @@ def calculate_city_metrics(city, df, _lstm, _trans, _scaler):
     if len(daily) < SEQUENCE_LENGTH + FORECAST_HORIZON:
         return None, None
         
-    # Temporal Features
     daily['DayOfYear'] = daily['Date'].dt.dayofyear
     daily['DayOfWeek'] = daily['Date'].dt.dayofweek
     daily['sin_doy'] = np.sin(2 * np.pi * daily['DayOfYear'] / 365)
@@ -190,7 +182,6 @@ def calculate_city_metrics(city, df, _lstm, _trans, _scaler):
     data[:, 0:12] = np.log1p(data[:, 0:12])
     data_scaled = _scaler.transform(data)
     
-    # Create Test Sequences (Last 10% of data)
     test_size = int(len(data_scaled) * 0.1)
     if test_size < 1: return None, None
     
@@ -206,11 +197,9 @@ def calculate_city_metrics(city, df, _lstm, _trans, _scaler):
     
     if len(X) == 0: return None, None
     
-    # Predict
     lstm_pred = _lstm.predict(X, verbose=0)
     trans_pred = _trans.predict(X, verbose=0)
     
-    # Helper for inverse
     def get_actuals(preds):
         dummy = np.zeros((preds.shape[0] * preds.shape[1], 16))
         dummy[:, 0:2] = preds.reshape(-1, 2)
@@ -221,7 +210,6 @@ def calculate_city_metrics(city, df, _lstm, _trans, _scaler):
     lstm_flat = get_actuals(lstm_pred)
     trans_flat = get_actuals(trans_pred)
     
-    # Metrics
     lstm_mae = mean_absolute_error(y_true_flat, lstm_flat)
     lstm_rmse = np.sqrt(mean_squared_error(y_true_flat, lstm_flat))
     trans_mae = mean_absolute_error(y_true_flat, trans_flat)
@@ -282,8 +270,8 @@ def get_dl_sequence(daily_df, scaler):
 # ==========================================
 # 5. MAIN APP UI
 # ==========================================
-st.title("⚡ SmogCast: Predicting and Forecasting Air Quality in India")
-st.markdown("### Real-Time Air Quality Insights & 7-Day Predictive Trends using CatBoost, LSTM & Transformers")
+st.title("⚡ Real-Time Air Quality Insights & 7-Day Predictive Trends")
+st.markdown("### Powered by Advanced AI: CatBoost, LSTM & Transformers")
 
 # Load Everything
 with st.spinner("Loading AI Brains..."):
@@ -308,7 +296,6 @@ with col1:
     selected_city = st.selectbox("Select City", cities)
     run_btn = st.button("Generate Forecast", type="primary")
     
-    # --- METRICS SECTION IN SIDEBAR ---
     st.markdown("---")
     st.markdown("### Model Performance")
     
@@ -333,17 +320,18 @@ with col2:
     if run_btn:
         daily_data = prep_data_for_prediction(raw_df, selected_city)
         
-        # --- CALCULATE LOCAL METRICS ---
+        # --- CALCULATE LOCAL METRICS (UPDATED UI) ---
         with st.spinner(f"Evaluating model on {selected_city} data..."):
             lstm_metrics, trans_metrics = calculate_city_metrics(selected_city, raw_df, lstm_model, trans_model, scaler)
 
         if lstm_metrics:
-             m_col1, m_col2 = st.columns(2)
-             m_col1.metric(f"LSTM MAE ({selected_city})", f"{lstm_metrics[0]:.2f}", delta_color="inverse")
-             m_col1.caption(f"RMSE: {lstm_metrics[1]:.2f}")
-             
-             m_col2.metric(f"Transformer MAE ({selected_city})", f"{trans_metrics[0]:.2f}", delta_color="inverse")
-             m_col2.caption(f"RMSE: {trans_metrics[1]:.2f}")
+             st.subheader(f"Forecast Error Metrics for {selected_city}")
+             # 4 Columns for clear visibility of RMSE
+             m1, m2, m3, m4 = st.columns(4)
+             m1.metric("LSTM MAE", f"{lstm_metrics[0]:.2f}", help="Mean Absolute Error (Average Deviation)")
+             m2.metric("LSTM RMSE", f"{lstm_metrics[1]:.2f}", help="Root Mean Squared Error (Penalizes Large Errors)")
+             m3.metric("Transf. MAE", f"{trans_metrics[0]:.2f}")
+             m4.metric("Transf. RMSE", f"{trans_metrics[1]:.2f}")
         
         st.divider()
 
@@ -392,4 +380,4 @@ with col2:
             fig_pm10.update_layout(title=f"PM10 Forecast", yaxis_title="µg/m³", template="plotly_dark")
             st.plotly_chart(fig_pm10, use_container_width=True)
     else:
-        st.info(" Select a city from the dropdown and click 'Generate Forecast'")
+        st.info("⇐ Select a city and click 'Generate Forecast'")
