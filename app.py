@@ -279,21 +279,23 @@ def get_health_advice(status):
     }
     return advice.get(status, "No specific advice available.")
 
-def plot_aqi_gauge(pm25_val):
+def plot_aqi_gauge(aqi_val):
     fig = go.Figure(go.Indicator(
         mode = "gauge+number",
-        value = pm25_val,
+        value = aqi_val,
         domain = {'x': [0, 1], 'y': [0, 1]},
-        title = {'text': "Current PM2.5 Level"},
+        title = {'text': "Current AQI Score"},
         gauge = {
             'axis': {'range': [None, 500]},
             'bar': {'color': "darkblue"},
             'steps' : [
-                {'range': [0, 50], 'color': "#00e400"},
-                {'range': [50, 100], 'color': "#ffff00"},
-                {'range': [100, 250], 'color': "#ff7e00"},
-                {'range': [250, 500], 'color': "#ff0000"}],
-            'threshold' : {'line': {'color': "red", 'width': 4}, 'thickness': 0.75, 'value': pm25_val}
+                {'range': [0, 50], 'color': "#00e400"}, # Good
+                {'range': [50, 100], 'color': "#ffff00"}, # Satisfactory
+                {'range': [100, 200], 'color': "#ff7e00"}, # Moderate
+                {'range': [200, 300], 'color': "#ff0000"}, # Poor
+                {'range': [300, 400], 'color': "#8f3f97"}, # Very Poor
+                {'range': [400, 500], 'color': "#7e0023"}], # Severe
+            'threshold' : {'line': {'color': "white", 'width': 4}, 'thickness': 0.75, 'value': aqi_val}
         }
     ))
     fig.update_layout(height=250, margin=dict(l=20,r=20,t=0,b=0))
@@ -375,8 +377,8 @@ with col2:
                 pred_class = cb_model.predict(cat_input)[0][0]
                 status = AQI_LABELS[pred_class]
                 
-                # Get current PM2.5 for gauge (Using last known value)
-                current_pm25 = daily_data['PM2.5'].iloc[-1]
+                # Get current AQI for gauge
+                current_aqi = calculate_full_aqi(daily_data.iloc[-1])
                 
                 # Two Columns: Status Box vs Gauge
                 c1, c2 = st.columns([2, 1])
@@ -394,7 +396,7 @@ with col2:
                     st.info(f"💡 **Recommendation:** {get_health_advice(status)}")
                 
                 with c2:
-                    st.plotly_chart(plot_aqi_gauge(current_pm25), use_container_width=True)
+                    st.plotly_chart(plot_aqi_gauge(current_aqi), use_container_width=True)
             
             # 2. Forecasting
             seq_input = get_dl_sequence(daily_data, scaler)
@@ -412,16 +414,43 @@ with col2:
             
             days = [f"Day +{i+1}" for i in range(7)]
             
-            fig_pm25 = go.Figure()
-            fig_pm25.add_trace(go.Scatter(x=days, y=lstm_final[:, 0], mode='lines+markers', name='Bi-LSTM', line=dict(color='red', width=2)))
-            fig_pm25.add_trace(go.Scatter(x=days, y=trans_final[:, 0], mode='lines+markers', name='Transformer', line=dict(color='green', width=2, dash='dot')))
-            fig_pm25.update_layout(title=f"PM2.5 Forecast", yaxis_title="µg/m³", template="plotly_dark")
-            st.plotly_chart(fig_pm25, use_container_width=True)
+            # Create two columns to display graphs side-by-side
+            g1, g2 = st.columns(2)
             
-            fig_pm10 = go.Figure()
-            fig_pm10.add_trace(go.Scatter(x=days, y=lstm_final[:, 1], mode='lines+markers', name='Bi-LSTM', line=dict(color='red', width=2)))
-            fig_pm10.add_trace(go.Scatter(x=days, y=trans_final[:, 1], mode='lines+markers', name='Transformer', line=dict(color='green', width=2, dash='dot')))
-            fig_pm10.update_layout(title=f"PM10 Forecast", yaxis_title="µg/m³", template="plotly_dark")
-            st.plotly_chart(fig_pm10, use_container_width=True)
+            with g1:
+                fig_pm25 = go.Figure()
+                fig_pm25.add_trace(go.Scatter(x=days, y=lstm_final[:, 0], mode='lines+markers', name='Bi-LSTM', line=dict(color='red', width=2)))
+                fig_pm25.add_trace(go.Scatter(x=days, y=trans_final[:, 0], mode='lines+markers', name='Transformer', line=dict(color='green', width=2, dash='dot')))
+                fig_pm25.update_layout(
+                    title=f"PM2.5 Forecast", 
+                    yaxis_title="µg/m³", 
+                    template="plotly_dark", 
+                    margin=dict(l=20, r=20, t=40, b=20), 
+                    height=350,
+                    xaxis=dict(showgrid=True, gridcolor='rgba(128, 128, 128, 0.2)'),
+                    yaxis=dict(showgrid=True, gridcolor='rgba(128, 128, 128, 0.2)'),
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    paper_bgcolor='rgba(0,0,0,0)'
+                )
+                fig_pm25.add_shape(type="rect", xref="paper", yref="paper", x0=0, y0=0, x1=1, y1=1, line=dict(color="rgba(255, 255, 255, 0.3)", width=1))
+                st.plotly_chart(fig_pm25, use_container_width=True)
+            
+            with g2:
+                fig_pm10 = go.Figure()
+                fig_pm10.add_trace(go.Scatter(x=days, y=lstm_final[:, 1], mode='lines+markers', name='Bi-LSTM', line=dict(color='red', width=2)))
+                fig_pm10.add_trace(go.Scatter(x=days, y=trans_final[:, 1], mode='lines+markers', name='Transformer', line=dict(color='green', width=2, dash='dot')))
+                fig_pm10.update_layout(
+                    title=f"PM10 Forecast", 
+                    yaxis_title="µg/m³", 
+                    template="plotly_dark", 
+                    margin=dict(l=20, r=20, t=40, b=20), 
+                    height=350,
+                    xaxis=dict(showgrid=True, gridcolor='rgba(128, 128, 128, 0.2)'),
+                    yaxis=dict(showgrid=True, gridcolor='rgba(128, 128, 128, 0.2)'),
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    paper_bgcolor='rgba(0,0,0,0)'
+                )
+                fig_pm10.add_shape(type="rect", xref="paper", yref="paper", x0=0, y0=0, x1=1, y1=1, line=dict(color="rgba(255, 255, 255, 0.3)", width=1))
+                st.plotly_chart(fig_pm10, use_container_width=True)
     else:
         st.info("👈 Select a city and click 'Generate Forecast'")
