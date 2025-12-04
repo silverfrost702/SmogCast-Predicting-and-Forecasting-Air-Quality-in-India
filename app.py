@@ -20,13 +20,14 @@ warnings.filterwarnings('ignore')
 
 # --- Streamlit Page Config ---
 st.set_page_config(page_title="Air Quality Forecasting AI", layout="wide")
+st.write("**v3.0 - Debugged Version**") # <--- LOOK FOR THIS ON YOUR SCREEN
 
 # --- Configuration Constants ---
 FILE_PATH = 'city_hour.csv' 
 FORECAST_HORIZON = 7 
 SEQUENCE_LENGTH = 45 
 BATCH_SIZE = 32
-# SPEED FIX: Reduced epochs to 10. (100 is too slow for Cloud CPU)
+# OPTIMIZED: Keep epochs low for Cloud deployment to prevent timeouts
 EPOCHS = 10 
 RANDOM_SEED = 42
 POLLUTANTS = ['PM2.5', 'PM10', 'NO', 'NO2', 'NOx', 'NH3', 'CO', 'SO2', 'O3', 'Benzene', 'Toluene', 'Xylene']
@@ -77,7 +78,7 @@ def calculate_full_aqi(row):
     return max(sub_indices) if sub_indices else 0.0
 
 # ==============================================================================
-# Cached Data Processing Functions
+# Cached Data Processing Functions (FIXED)
 # ==============================================================================
 
 @st.cache_data
@@ -93,14 +94,14 @@ def prepare_classification_data(df):
     df['Datetime'] = pd.to_datetime(df['Datetime'])
     df['AQI_Calculated'] = df.apply(calculate_full_aqi, axis=1)
     
-    # 1. Try filling with median
+    # 1. Fill missing values with median
     for col in POLLUTANTS + ['AQI_Calculated']:
         df[col] = df.groupby('City')[col].transform(lambda x: x.fillna(x.median()))
     
-    # --- CRITICAL FIX: Safety Fill ---
-    # If a city is missing a chemical entirely, fill with 0 to prevent deleting the city
+    # --- CRITICAL FIX 1: Safety Fill ---
+    # Prevents data loss if a city is completely missing one pollutant
     df.fillna(0, inplace=True)
-    # ---------------------------------
+    # -----------------------------------
     
     def aqi_to_category(aqi):
         if aqi <= 100: return 0 
@@ -139,7 +140,7 @@ def prepare_forecasting_data(df, target_city):
     city_df = city_df.sort_values('Datetime').reset_index(drop=True)
     city_df[POLLUTANTS] = city_df[POLLUTANTS].ffill()
     
-    # Safety fill for forecasting as well
+    # Safety fill for forecasting
     city_df[POLLUTANTS] = city_df[POLLUTANTS].fillna(0)
     city_df = city_df.dropna(subset=POLLUTANTS)
     
@@ -269,7 +270,7 @@ def train_transformer(_X_train, _Y_train, _X_val, _Y_val, input_shape):
     return model
 
 # ==============================================================================
-# UI Implementation (With Crash Fix)
+# UI Implementation (FIXED: Safe Logic for Status)
 # ==============================================================================
 
 st.title("🏭 Air Quality Forecasting & Classification")
@@ -298,11 +299,11 @@ if df is not None:
         
         st.metric("Model Test Accuracy", f"{acc*100:.2f}%")
         
-        # --- CRITICAL FIX: SAFETY CHECK BEFORE ACCESSING DATA ---
+        # --- CRITICAL FIX 2: Check if Empty BEFORE Accessing ---
         city_subset = daily_df_class[daily_df_class['City'] == selected_city]
         
-        if not city_subset.empty:
-            city_latest = city_subset.iloc[[-1]] # Only access if not empty
+        if len(city_subset) > 0:  # <--- This prevents the crash
+            city_latest = city_subset.iloc[[-1]]
             
             features = POLLUTANTS + lag_feats + CAT_FEATURES + ['DayOfWeek']
             X_latest = city_latest[features].copy()
