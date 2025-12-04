@@ -20,14 +20,15 @@ warnings.filterwarnings('ignore')
 
 # --- Streamlit Page Config ---
 st.set_page_config(page_title="Air Quality Forecasting AI", layout="wide")
-st.write("**v3.1 - Robust Logic (Crash Fixed)**") # <--- CHECK FOR THIS TEXT
+st.write("**v4.0 - Fast & Fixed (Epochs=1, Grouping Fixed)**") 
 
 # --- Configuration Constants ---
 FILE_PATH = 'city_hour.csv' 
 FORECAST_HORIZON = 7 
 SEQUENCE_LENGTH = 45 
 BATCH_SIZE = 32
-EPOCHS = 10 
+# SPEED UPDATE: Epochs set to 1 for maximum speed as requested
+EPOCHS = 1 
 RANDOM_SEED = 42
 POLLUTANTS = ['PM2.5', 'PM10', 'NO', 'NO2', 'NOx', 'NH3', 'CO', 'SO2', 'O3', 'Benzene', 'Toluene', 'Xylene']
 CAT_FEATURES = ['City'] 
@@ -77,7 +78,7 @@ def calculate_full_aqi(row):
     return max(sub_indices) if sub_indices else 0.0
 
 # ==============================================================================
-# Cached Data Processing Functions (LOGIC FIXED HERE)
+# Cached Data Processing Functions (FIXED)
 # ==============================================================================
 
 @st.cache_data
@@ -97,9 +98,8 @@ def prepare_classification_data(df):
     for col in POLLUTANTS + ['AQI_Calculated']:
         df[col] = df.groupby('City')[col].transform(lambda x: x.fillna(x.median()))
     
-    # --- LOGIC FIX 1: Prevent 'dropna' from killing cities with missing columns ---
+    # 2. Safety Fill
     df.fillna(0, inplace=True) 
-    # -----------------------------------------------------------------------------
     
     def aqi_to_category(aqi):
         if aqi <= 100: return 0 
@@ -109,13 +109,14 @@ def prepare_classification_data(df):
         
     df['AQI_Target'] = df['AQI_Calculated'].apply(aqi_to_category)
     
-    daily_df = df.groupby(df['Datetime'].dt.date).agg({
+    # --- MAJOR FIX: Group by City AND Date ---
+    # This prevents Delhi data from being merged with other cities
+    df['Date'] = df['Datetime'].dt.date
+    daily_df = df.groupby(['City', 'Date']).agg({
         **{p: 'mean' for p in POLLUTANTS},
-        'City': lambda x: x.iloc[0],
         'AQI_Target': lambda x: x.value_counts().index[0]
     }).reset_index()
     
-    daily_df.rename(columns={'Datetime': 'Date'}, inplace=True)
     daily_df['Date'] = pd.to_datetime(daily_df['Date'])
     daily_df['DayOfWeek'] = daily_df['Date'].dt.dayofweek
     
@@ -268,7 +269,7 @@ def train_transformer(_X_train, _Y_train, _X_val, _Y_val, input_shape):
     return model
 
 # ==============================================================================
-# UI Implementation (LOGIC FIXED HERE)
+# UI Implementation
 # ==============================================================================
 
 st.title("🏭 Air Quality Forecasting & Classification")
@@ -297,12 +298,10 @@ if df is not None:
         
         st.metric("Model Test Accuracy", f"{acc*100:.2f}%")
         
-        # --- LOGIC FIX 2: Check if data exists BEFORE grabbing it ---
         city_subset = daily_df_class[daily_df_class['City'] == selected_city]
         
-        if not city_subset.empty:
-            # ONLY safe to use .iloc[-1] because we know the list isn't empty
-            city_latest = city_subset.iloc[[-1]] 
+        if len(city_subset) > 0:
+            city_latest = city_subset.iloc[[-1]]
             
             features = POLLUTANTS + lag_feats + CAT_FEATURES + ['DayOfWeek']
             X_latest = city_latest[features].copy()
@@ -319,7 +318,6 @@ if df is not None:
             
             st.markdown(f"**Current Estimated Status for {selected_city}:** <span style='color:{color_map.get(status_text, 'black')}; font-size:1.2em; font-weight:bold'>{status_text}</span>", unsafe_allow_html=True)
         else:
-            # If the list IS empty, show a warning instead of crashing
             st.warning(f"Insufficient data to classify current status for {selected_city} (Global model still accurate).")
 
         # --- PART 2: FORECASTING ---
