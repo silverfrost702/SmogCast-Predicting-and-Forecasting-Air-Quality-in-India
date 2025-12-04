@@ -28,7 +28,7 @@ FORECAST_HORIZON = 7
 SEQUENCE_LENGTH = 45 
 BATCH_SIZE = 32
 # SPEED UPDATE: Epochs set to 1 for maximum speed as requested
-EPOCHS = 5 
+EPOCHS = 15 
 RANDOM_SEED = 42
 POLLUTANTS = ['PM2.5', 'PM10', 'NO', 'NO2', 'NOx', 'NH3', 'CO', 'SO2', 'O3', 'Benzene', 'Toluene', 'Xylene']
 CAT_FEATURES = ['City'] 
