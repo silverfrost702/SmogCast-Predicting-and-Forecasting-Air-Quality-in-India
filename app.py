@@ -1,419 +1,254 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import MinMaxScaler, LabelEncoder
-from sklearn.metrics import accuracy_score, classification_report, mean_absolute_error, mean_squared_error
-from catboost import CatBoostClassifier
 import tensorflow as tf
-from tensorflow.keras.models import Sequential, Model
-from tensorflow.keras.layers import LSTM, Dense, Dropout, Layer, MultiHeadAttention, Normalization, Input, Bidirectional
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-from imblearn.over_sampling import SMOTE
+from tensorflow.keras.layers import Layer
+from catboost import CatBoostClassifier
+import joblib
+import plotly.graph_objects as go
 import warnings
-import random
-import gc # Garbage Collector for memory management
 
 # Suppress warnings
 warnings.filterwarnings('ignore')
 
-# --- Streamlit Page Config ---
-st.set_page_config(page_title="Air Quality Forecasting AI", layout="wide")
-st.write("**v5.0 - Stable Lite Version (Memory Leak Fixed)**") 
+# --- Page Config ---
+st.set_page_config(page_title="Air Quality AI (Instant)", layout="wide")
 
-# --- Configuration Constants ---
-FILE_PATH = 'city_hour.csv' 
-FORECAST_HORIZON = 7 
-SEQUENCE_LENGTH = 45 
-# MEMORY FIX 1: Reduced Batch Size (Smaller chunks = Less RAM)
-BATCH_SIZE = 16 
-# MEMORY FIX 2: Low Epochs for Cloud Stability
-EPOCHS = 10 
-RANDOM_SEED = 42
+# --- Constants ---
+FILE_PATH = 'city_hour.csv'
+SEQUENCE_LENGTH = 45
 POLLUTANTS = ['PM2.5', 'PM10', 'NO', 'NO2', 'NOx', 'NH3', 'CO', 'SO2', 'O3', 'Benzene', 'Toluene', 'Xylene']
-CAT_FEATURES = ['City'] 
-AQI_LABELS_FULL = ['Good/Satis', 'Moderate', 'Poor', 'Very Poor/Severe'] 
+CAT_FEATURES = ['City']
+AQI_LABELS = ['Good/Satis', 'Moderate', 'Poor', 'Very Poor/Severe']
 
-# ==============================================================================
-# Helper Classes and Functions
-# ==============================================================================
+# ==========================================
+# 1. CUSTOM LAYER DEFINITION (Required for Loading)
+# ==========================================
+@st.cache_resource
+def get_custom_objects():
+    class PositionalEncoding(Layer):
+        def __init__(self, sequence_length=500, d_model=128, **kwargs):
+            super(PositionalEncoding, self).__init__(**kwargs)
+            self.d_model = d_model
+            pe = np.zeros((sequence_length, d_model))
+            position = np.arange(0, sequence_length, dtype=np.float32)[:, np.newaxis]
+            div_term = np.exp(np.arange(0, d_model, 2).astype(np.float32) * (-np.log(10000.0) / d_model))
+            pe[:, 0::2] = np.sin(position * div_term)
+            pe[:, 1::2] = np.cos(position * div_term)
+            self.pe = tf.constant(pe[np.newaxis, ...], dtype=tf.float32)
+        def call(self, inputs):
+            return inputs + self.pe[:, :tf.shape(inputs)[1]]
+        def get_config(self):
+            config = super().get_config()
+            config.update({"sequence_length": 500, "d_model": self.d_model})
+            return config
+    return {"PositionalEncoding": PositionalEncoding}
 
-class PositionalEncoding(Layer):
-    def __init__(self, sequence_length, d_model, **kwargs):
-        super(PositionalEncoding, self).__init__(**kwargs)
-        self.d_model = d_model
-        pe = np.zeros((sequence_length, d_model))
-        position = np.arange(0, sequence_length, dtype=np.float32)[:, np.newaxis]
-        div_term = np.exp(np.arange(0, d_model, 2).astype(np.float32) * (-np.log(10000.0) / d_model))
-        pe[:, 0::2] = np.sin(position * div_term)
-        pe[:, 1::2] = np.cos(position * div_term)
-        self.pe = tf.constant(pe[np.newaxis, ...], dtype=tf.float32)
-    def call(self, inputs):
-        return inputs + self.pe[:, :tf.shape(inputs)[1]]
-    
-    def get_config(self):
-        config = super().get_config()
-        config.update({"sequence_length": 500, "d_model": self.d_model})
-        return config
-
-# AQI Calculation Logic
-AQI_BREAKS = {
-    'PM2.5': [(0.0, 30.0, 0, 50), (30.1, 60.0, 51, 100), (60.1, 90.0, 101, 200), (90.1, 120.0, 201, 300), (120.1, 250.0, 301, 400), (250.1, 500.0, 401, 500)],
-    'PM10': [(0.0, 50.0, 0, 50), (50.1, 100.0, 51, 100), (100.1, 250.0, 101, 200), (250.1, 350.0, 201, 300), (350.1, 430.0, 301, 400), (430.1, 1000.0, 401, 500)]
-}
-
-def get_sub_index(c, bph, bpl, iph, ipl):
-    return ((iph - ipl) / (bph - bpl)) * (c - bpl) + ipl
-
-def calculate_full_aqi(row):
-    sub_indices = []
-    pm25_val = max(0.01, row['PM2.5'])
-    for bpl, bph, ipl, iph in AQI_BREAKS['PM2.5']:
-        if bpl <= pm25_val <= bph: sub_indices.append(get_sub_index(pm25_val, bph, bpl, iph, ipl)); break
-    else: sub_indices.append(500.0)
-    pm10_val = max(0.01, row['PM10'])
-    for bpl, bph, ipl, iph in AQI_BREAKS['PM10']:
-        if bpl <= pm10_val <= bph: sub_indices.append(get_sub_index(pm10_val, bph, bpl, iph, ipl)); break
-    else: sub_indices.append(500.0)
-    return max(sub_indices) if sub_indices else 0.0
-
-# ==============================================================================
-# Cached Data Processing Functions (ROBUST)
-# ==============================================================================
-
-@st.cache_data
-def load_data():
+# ==========================================
+# 2. LOAD MODELS (Cached = Instant)
+# ==========================================
+@st.cache_resource
+def load_artifacts():
     try:
-        df = pd.read_csv(FILE_PATH)
-        return df
-    except FileNotFoundError:
-        return None
-
-@st.cache_data
-def prepare_classification_data(df):
-    df['Datetime'] = pd.to_datetime(df['Datetime'])
-    df['AQI_Calculated'] = df.apply(calculate_full_aqi, axis=1)
-    
-    # 1. Fill with median
-    for col in POLLUTANTS + ['AQI_Calculated']:
-        df[col] = df.groupby('City')[col].transform(lambda x: x.fillna(x.median()))
-    
-    # 2. Safety Fill (Prevents Dropna from killing cities)
-    df.fillna(0, inplace=True) 
-    
-    def aqi_to_category(aqi):
-        if aqi <= 100: return 0 
-        elif aqi <= 200: return 1 
-        elif aqi <= 300: return 2 
-        else: return 3 
+        # Load CatBoost
+        cb_model = CatBoostClassifier()
+        cb_model.load_model("catboost_model.cbm")
         
-    df['AQI_Target'] = df['AQI_Calculated'].apply(aqi_to_category)
-    
-    # 3. Proper Grouping (City + Date)
-    df['Date'] = df['Datetime'].dt.date
-    daily_df = df.groupby(['City', 'Date']).agg({
-        **{p: 'mean' for p in POLLUTANTS},
-        'AQI_Target': lambda x: x.value_counts().index[0]
-    }).reset_index()
-    
-    daily_df['Date'] = pd.to_datetime(daily_df['Date'])
-    daily_df['DayOfWeek'] = daily_df['Date'].dt.dayofweek
-    
-    lag_features = []
-    for p in POLLUTANTS:
-        daily_df[f'{p}_lag1'] = daily_df.groupby('City')[p].shift(1)
-        lag_features.append(f'{p}_lag1')
-        daily_df[f'{p}_roll7'] = daily_df.groupby('City')[p].transform(
-            lambda x: x.rolling(window=7, min_periods=1).mean().shift(1)
-        )
-        lag_features.append(f'{p}_roll7')
+        # Load Keras Models with Custom Layer
+        custom_objs = get_custom_objects()
+        lstm_model = tf.keras.models.load_model("lstm_model.keras", custom_objects=custom_objs)
+        trans_model = tf.keras.models.load_model("transformer_model.keras", custom_objects=custom_objs)
         
-    daily_df.dropna(inplace=True)
-    return daily_df, lag_features
+        # Load Scalers
+        scaler = joblib.load("scaler.pkl")
+        encoders = joblib.load("encoders.pkl")
+        
+        return cb_model, lstm_model, trans_model, scaler, encoders
+    except Exception as e:
+        return None, None, None, None, str(e)
 
-@st.cache_data
-def prepare_forecasting_data(df, target_city):
-    city_df = df[df['City'] == target_city].copy()
+# ==========================================
+# 3. DATA PREPARATION HELPERS
+# ==========================================
+def prep_data_for_prediction(df, city):
+    # Filter City
+    city_df = df[df['City'] == city].copy()
     city_df['Datetime'] = pd.to_datetime(city_df['Datetime'])
-    city_df = city_df.sort_values('Datetime').reset_index(drop=True)
-    city_df[POLLUTANTS] = city_df[POLLUTANTS].ffill()
+    city_df = city_df.sort_values('Datetime')
     
-    # Safety fill for forecasting
-    city_df[POLLUTANTS] = city_df[POLLUTANTS].fillna(0)
-    city_df = city_df.dropna(subset=POLLUTANTS)
+    # Impute Missing Values (Same logic as training)
+    for col in POLLUTANTS:
+        city_df[col] = city_df[col].fillna(city_df[col].median())
+    city_df.fillna(0, inplace=True) # Safety fill
     
-    city_df['DayOfYear'] = city_df['Datetime'].dt.dayofyear
-    city_df['DayOfWeek'] = city_df['Datetime'].dt.dayofweek
-    city_df['sin_doy'] = np.sin(2 * np.pi * city_df['DayOfYear'] / 365)
-    city_df['cos_doy'] = np.cos(2 * np.pi * city_df['DayOfYear'] / 365)
-    city_df['sin_dow'] = np.sin(2 * np.pi * city_df['DayOfWeek'] / 7)
-    city_df['cos_dow'] = np.cos(2 * np.pi * city_df['DayOfWeek'] / 7)
+    # Daily Aggregation
+    city_df['Date'] = city_df['Datetime'].dt.date
+    daily = city_df.groupby('Date')[POLLUTANTS].mean().reset_index()
+    daily['Date'] = pd.to_datetime(daily['Date'])
     
-    TEMPORAL_FEATURES = ['sin_doy', 'cos_doy', 'sin_dow', 'cos_dow']
-    forecast_features = POLLUTANTS + TEMPORAL_FEATURES
-    data = city_df[forecast_features].values
-    
-    data[:, 0:12] = np.log1p(data[:, 0:12]) 
-    
-    scaler = MinMaxScaler()
-    data_scaled = scaler.fit_transform(data)
-    
-    X, Y = [], []
-    for i in range(len(data_scaled) - SEQUENCE_LENGTH - FORECAST_HORIZON + 1):
-        X.append(data_scaled[i : i + SEQUENCE_LENGTH])
-        Y.append(data_scaled[i + SEQUENCE_LENGTH : i + SEQUENCE_LENGTH + FORECAST_HORIZON, 0:2])
-        
-    X = np.array(X)
-    Y = np.array(Y)
-    
-    N = len(X)
-    if N == 0: return None, None, None, None, None, None, None
-    
-    split_train = int(0.8 * N)
-    split_val = int(0.9 * N) 
+    return daily
 
-    X_train, X_val, X_test = X[:split_train], X[split_train:split_val], X[split_val:]
-    Y_train, Y_val, Y_test = Y[:split_train], Y[split_train:split_val], Y[split_val:]
+def get_catboost_features(daily_df, encoders, city):
+    # Need Lag Features for the LATEST day
+    if len(daily_df) < 8: return None # Need at least 8 days for 7-day rolling
     
-    dummy_inverse_scaler = MinMaxScaler()
-    dummy_inverse_scaler.min_, dummy_inverse_scaler.scale_ = scaler.min_[0:2], scaler.scale_[0:2]
+    last_row = daily_df.iloc[[-1]].copy()
     
-    return X_train, X_val, X_test, Y_train, Y_val, Y_test, dummy_inverse_scaler
-
-# ==============================================================================
-# Model Training (MEMORY SAFE)
-# ==============================================================================
-
-@st.cache_resource
-def train_classification_model(daily_df, lag_features):
-    features = POLLUTANTS + lag_features + CAT_FEATURES + ['DayOfWeek']
-    X = daily_df[features].copy()
-    y = daily_df['AQI_Target'].values
+    # Create Features manually for the last row
+    # (In a real app, you'd calculate these rolling stats properly over the whole series)
+    features = {}
+    for p in POLLUTANTS:
+        features[p] = last_row[p].values[0]
+        # Approximation: Using previous day as lag1
+        features[f'{p}_lag1'] = daily_df.iloc[-2][p]
+        # Approximation: Using last 7 days mean
+        features[f'{p}_roll7'] = daily_df.iloc[-8:-1][p].mean()
     
-    X_train, X_temp, y_train, y_temp = train_test_split(X, y, test_size=0.2, random_state=RANDOM_SEED, stratify=y)
-    X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.5, random_state=RANDOM_SEED, stratify=y_temp)
+    features['City'] = city
+    features['DayOfWeek'] = last_row['Date'].dt.dayofweek.values[0]
     
-    cat_cols_to_encode = CAT_FEATURES + ['DayOfWeek']
-    X_train_smote = X_train.copy()
-    le_encoders = {}
-    for col in cat_cols_to_encode:
-        le = LabelEncoder()
-        X_train_smote[col] = le.fit_transform(X_train_smote[col])
-        le_encoders[col] = le
-        
-    sm = SMOTE(random_state=RANDOM_SEED)
-    X_train_res, y_train_res = sm.fit_resample(X_train_smote, y_train)
-
-    for col in cat_cols_to_encode:
-        X_train_res[col] = X_train_res[col].astype('int').map(lambda x: le_encoders[col].inverse_transform([x])[0] if x in le_encoders[col].classes_ else x)
-
-    cat_features_indices = [X_train_res.columns.get_loc(col) for col in cat_cols_to_encode]
+    # Convert to DataFrame
+    input_df = pd.DataFrame([features])
     
-    cb_model = CatBoostClassifier(
-        iterations=200, learning_rate=0.1, loss_function='MultiClass', eval_metric='Accuracy',
-        random_seed=RANDOM_SEED, verbose=0, allow_writing_files=False
-    )
+    # Encode
+    for col in ['City', 'DayOfWeek']:
+        if col in encoders:
+            le = encoders[col]
+            # Handle unknown labels safely
+            val = input_df[col].iloc[0]
+            if val in le.classes_:
+                input_df[col] = le.transform([val])
+            else:
+                input_df[col] = 0 # Default to 0 if unknown
+                
+    # Ensure column order matches training
+    # (POLLUTANTS + Lag Features + City + DayOfWeek)
+    feature_order = []
+    for p in POLLUTANTS:
+        feature_order.extend([p, f'{p}_lag1', f'{p}_roll7'])
+    feature_order.extend(['City', 'DayOfWeek'])
     
-    def prepare_test_set(X_set):
-        X_set_encoded = X_set.copy()
-        for col in cat_cols_to_encode:
-            X_set_encoded[col] = X_set_encoded[col].apply(lambda x: le_encoders[col].transform([x])[0] if x in le_encoders[col].classes_ else np.nan)
-            X_set_encoded[col] = X_set_encoded[col].astype(float).map(lambda x: le_encoders[col].inverse_transform([int(x)])[0] if not np.isnan(x) else 'Unknown')
-        return X_set_encoded
+    return input_df[feature_order]
 
-    cb_model.fit(X_train_res, y_train_res, cat_features=cat_features_indices, early_stopping_rounds=20, eval_set=(prepare_test_set(X_val), y_val))
+def get_dl_sequence(daily_df, scaler):
+    if len(daily_df) < SEQUENCE_LENGTH: return None
     
-    X_test_final = prepare_test_set(X_test)
-    y_pred = cb_model.predict(X_test_final)
-    accuracy = accuracy_score(y_test, y_pred.flatten())
+    # Take last 45 days
+    seq_df = daily_df.iloc[-SEQUENCE_LENGTH:].copy()
     
-    return cb_model, accuracy, le_encoders
-
-@st.cache_resource
-def train_lstm(_X_train, _Y_train, _X_val, _Y_val, input_shape):
-    # MEMORY FIX 3: Clear old sessions before training new ones
-    tf.keras.backend.clear_session()
-    gc.collect()
-
-    model = Sequential([
-        # MEMORY FIX 4: Reduced units (64) to save RAM
-        Bidirectional(LSTM(units=64, return_sequences=True), input_shape=input_shape), 
-        Dropout(0.3),
-        # MEMORY FIX 5: Reduced units (32)
-        Bidirectional(LSTM(units=32)), 
-        Dropout(0.3),
-        Dense(FORECAST_HORIZON * 2) 
-    ])
-    model.add(tf.keras.layers.Reshape((FORECAST_HORIZON, 2)))
-    model.compile(optimizer=Adam(learning_rate=0.001), loss='mse')
+    # Add Temporal Features
+    seq_df['DayOfYear'] = seq_df['Date'].dt.dayofyear
+    seq_df['DayOfWeek'] = seq_df['Date'].dt.dayofweek
     
-    callbacks = [EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)]
-    model.fit(_X_train, _Y_train, epochs=EPOCHS, batch_size=BATCH_SIZE, validation_data=(_X_val, _Y_val), callbacks=callbacks, verbose=0)
-    return model
-
-@st.cache_resource
-def train_transformer(_X_train, _Y_train, _X_val, _Y_val, input_shape):
-    # MEMORY FIX 6: Clear session again for the second model
-    tf.keras.backend.clear_session()
-    gc.collect()
-
-    seq_len, d_model = input_shape
-    inputs = Input(shape=input_shape)
-    x = PositionalEncoding(seq_len, d_model)(inputs)
+    seq_df['sin_doy'] = np.sin(2 * np.pi * seq_df['DayOfYear'] / 365)
+    seq_df['cos_doy'] = np.cos(2 * np.pi * seq_df['DayOfYear'] / 365)
+    seq_df['sin_dow'] = np.sin(2 * np.pi * seq_df['DayOfWeek'] / 7)
+    seq_df['cos_dow'] = np.cos(2 * np.pi * seq_df['DayOfWeek'] / 7)
     
-    # MEMORY FIX 7: Reduced key_dim and number of heads
-    attn_output = MultiHeadAttention(num_heads=2, key_dim=32)(x, x)
-    x = attn_output + x
-    x = Normalization(axis=-1)(x)
+    temp_feats = ['sin_doy', 'cos_doy', 'sin_dow', 'cos_dow']
+    data = seq_df[POLLUTANTS + temp_feats].values
     
-    # MEMORY FIX 8: Reduced dense layer size
-    ffn_output = Dense(128, activation='relu')(x)
-    ffn_output = Dense(d_model)(ffn_output)
-    x = ffn_output + x
-    x = Normalization(axis=-1)(x)
-    x = tf.keras.layers.Flatten()(x)
-    outputs = Dense(FORECAST_HORIZON * 2)(x)
-    outputs = tf.keras.layers.Reshape((FORECAST_HORIZON, 2))(outputs)
-    model = Model(inputs=inputs, outputs=outputs)
-    model.compile(optimizer=Adam(learning_rate=0.001), loss='mse')
+    # Log Transform
+    data[:, 0:12] = np.log1p(data[:, 0:12])
     
-    callbacks = [EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)]
-    model.fit(_X_train, _Y_train, epochs=EPOCHS, batch_size=BATCH_SIZE, validation_data=(_X_val, _Y_val), callbacks=callbacks, verbose=0)
-    return model
-
-# ==============================================================================
-# UI Implementation
-# ==============================================================================
-
-st.title("🏭 Air Quality Forecasting & Classification")
-st.markdown("Features: **CatBoost Classifier** (AQI Category) | **Bi-LSTM & Transformer** (PM2.5/PM10 Forecasting)")
-
-# 1. Load Data
-df = load_data()
-
-if df is not None:
-    cities = sorted(df['City'].unique())
+    # Scale
+    data_scaled = scaler.transform(data)
     
-    # Sidebar
-    st.sidebar.header("Controls")
-    selected_city = st.sidebar.selectbox("Select Target City", cities)
-    run_btn = st.sidebar.button("Run Models")
+    # Reshape for Model (1, 45, 16)
+    return np.expand_dims(data_scaled, axis=0)
 
+# ==========================================
+# 4. MAIN APP UI
+# ==========================================
+
+st.title("⚡ SmogCast: Instant Air Quality AI")
+st.markdown("### Pre-trained Models: CatBoost (Status) | LSTM & Transformer (Forecast)")
+
+# 1. Load Everything
+with st.spinner("Loading AI Brains..."):
+    cb_model, lstm_model, trans_model, scaler, encoders = load_artifacts()
+
+if isinstance(encoders, str): # Error handling
+    st.error(f"Failed to load models. Please ensure .keras/.cbm/.pkl files are in GitHub root.\nError: {encoders}")
+    st.stop()
+
+# 2. Load Data for Selection
+try:
+    raw_df = pd.read_csv(FILE_PATH)
+    cities = sorted(raw_df['City'].unique())
+except:
+    st.error("Could not load city_hour.csv")
+    st.stop()
+
+# 3. UI Controls
+col1, col2 = st.columns([1, 3])
+with col1:
+    st.subheader("Controls")
+    selected_city = st.selectbox("Select City", cities)
+    run_btn = st.button("Generate Forecast", type="primary")
+
+with col2:
     if run_btn:
-        st.divider()
+        # --- A. PREPARE DATA ---
+        daily_data = prep_data_for_prediction(raw_df, selected_city)
         
-        # --- PART 1: CLASSIFICATION ---
-        st.subheader(f"1. AQI Classification (CatBoost)")
-        
-        with st.spinner('Training/Loading Classification Model...'):
-            daily_df_class, lag_feats = prepare_classification_data(df.copy())
-            cb_model, acc, encoders = train_classification_model(daily_df_class, lag_feats)
-        
-        st.metric("Model Test Accuracy", f"{acc*100:.2f}%")
-        
-        city_subset = daily_df_class[daily_df_class['City'] == selected_city]
-        
-        if len(city_subset) > 0:
-            city_latest = city_subset.iloc[[-1]]
-            
-            features = POLLUTANTS + lag_feats + CAT_FEATURES + ['DayOfWeek']
-            X_latest = city_latest[features].copy()
-            for col in CAT_FEATURES + ['DayOfWeek']:
-                val = X_latest[col].values[0]
-                if val in encoders[col].classes_:
-                    X_latest[col] = encoders[col].transform([val])
-                else:
-                    X_latest[col] = -1 
-            
-            pred_class = cb_model.predict(X_latest)[0][0]
-            status_text = AQI_LABELS_FULL[pred_class]
-            color_map = {'Good/Satis': 'green', 'Moderate': 'orange', 'Poor': 'red', 'Very Poor/Severe': 'purple'}
-            
-            st.markdown(f"**Current Estimated Status for {selected_city}:** <span style='color:{color_map.get(status_text, 'black')}; font-size:1.2em; font-weight:bold'>{status_text}</span>", unsafe_allow_html=True)
+        if len(daily_data) < SEQUENCE_LENGTH:
+            st.warning(f"Not enough historical data for {selected_city} to generate a forecast.")
         else:
-            st.warning(f"Insufficient data to classify current status for {selected_city} (Global model still accurate).")
-
-        # --- PART 2: FORECASTING ---
-        st.divider()
-        st.subheader(f"2. 7-Day Forecasting (LSTM vs Transformer)")
-        
-        with st.spinner(f'Preparing Time Series for {selected_city}...'):
-            X_train, X_val, X_test, Y_train, Y_val, Y_test, inv_scaler = prepare_forecasting_data(df, selected_city)
-        
-        if X_train is not None:
-            input_shape = (X_train.shape[1], X_train.shape[2])
-            
-            def inverse_helper(data, scaler):
-                shape = data.shape
-                data_flat = data.reshape(-1, shape[-1])
-                data_rescaled = scaler.inverse_transform(data_flat)
-                return data_rescaled.reshape(shape)
-
-            col_lstm, col_trans = st.columns(2)
-
-            # --- LSTM ---
-            with col_lstm:
-                st.markdown("### Bi-LSTM")
-                with st.spinner('Training LSTM...'):
-                    lstm_model = train_lstm(X_train, Y_train, X_val, Y_val, input_shape)
+            # --- B. CLASSIFICATION (CatBoost) ---
+            cat_input = get_catboost_features(daily_data, encoders, selected_city)
+            if cat_input is not None:
+                pred_class = cb_model.predict(cat_input)[0][0]
+                status = AQI_LABELS[pred_class]
                 
-                Y_pred_scaled = lstm_model.predict(X_test, verbose=0)
-                Y_pred_lstm = np.expm1(inverse_helper(Y_pred_scaled, inv_scaler))
-                Y_test_actual = np.expm1(inverse_helper(Y_test, inv_scaler))
-
-                mae_lstm = mean_absolute_error(Y_test_actual.flatten(), Y_pred_lstm.flatten())
-                rmse_lstm = np.sqrt(mean_squared_error(Y_test_actual.flatten(), Y_pred_lstm.flatten()))
+                # Dynamic Color
+                colors = {'Good/Satis': '#00e400', 'Moderate': '#ffff00', 'Poor': '#ff7e00', 'Very Poor/Severe': '#ff0000'}
+                c = colors.get(status, '#ffffff')
                 
-                st.metric("MAE", f"{mae_lstm:.2f}", delta_color="inverse")
-                st.metric("RMSE", f"{rmse_lstm:.2f}", delta_color="inverse")
+                st.markdown(f"""
+                <div style="padding: 20px; background-color: {c}; border-radius: 10px; color: black; text-align: center; margin-bottom: 20px;">
+                    <h2 style="margin:0;">Current Status: {status}</h2>
+                    <p style="margin:0;">Based on latest available data pattern</p>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            # --- C. FORECASTING (Deep Learning) ---
+            seq_input = get_dl_sequence(daily_data, scaler)
+            
+            # Predict
+            lstm_pred_scaled = lstm_model.predict(seq_input, verbose=0)
+            trans_pred_scaled = trans_model.predict(seq_input, verbose=0)
+            
+            # Inverse Transform Logic
+            # We need to construct a dummy array matching the scaler's shape (16 features)
+            # The model predicts only 2 features (PM2.5, PM10). We fill the rest with zeros to inverse.
+            def inverse_predictions(pred_scaled):
+                dummy = np.zeros((7, 16))
+                dummy[:, 0:2] = pred_scaled[0] # Fill first 2 cols
+                inverse = scaler.inverse_transform(dummy)
+                return np.expm1(inverse[:, 0:2]) # Expm1 to reverse Log1p
+            
+            lstm_final = inverse_predictions(lstm_pred_scaled)
+            trans_final = inverse_predictions(trans_pred_scaled)
+            
+            # --- D. VISUALIZATION ---
+            st.subheader("7-Day Forecast (PM2.5 & PM10)")
+            
+            days = [f"Day +{i+1}" for i in range(7)]
+            
+            # PM2.5 Chart
+            fig_pm25 = go.Figure()
+            fig_pm25.add_trace(go.Scatter(x=days, y=lstm_final[:, 0], mode='lines+markers', name='Bi-LSTM', line=dict(color='red', width=2)))
+            fig_pm25.add_trace(go.Scatter(x=days, y=trans_final[:, 0], mode='lines+markers', name='Transformer', line=dict(color='green', width=2, dash='dot')))
+            fig_pm25.update_layout(title=f"PM2.5 Forecast for {selected_city}", yaxis_title="µg/m³", template="plotly_dark")
+            st.plotly_chart(fig_pm25, use_container_width=True)
+            
+            # PM10 Chart
+            fig_pm10 = go.Figure()
+            fig_pm10.add_trace(go.Scatter(x=days, y=lstm_final[:, 1], mode='lines+markers', name='Bi-LSTM', line=dict(color='red', width=2)))
+            fig_pm10.add_trace(go.Scatter(x=days, y=trans_final[:, 1], mode='lines+markers', name='Transformer', line=dict(color='green', width=2, dash='dot')))
+            fig_pm10.update_layout(title=f"PM10 Forecast for {selected_city}", yaxis_title="µg/m³", template="plotly_dark")
+            st.plotly_chart(fig_pm10, use_container_width=True)
 
-            # --- Transformer ---
-            with col_trans:
-                st.markdown("### Transformer")
-                with st.spinner('Training Transformer...'):
-                    transformer_model = train_transformer(X_train, Y_train, X_val, Y_val, input_shape)
-                
-                Y_pred_scaled_t = transformer_model.predict(X_test, verbose=0)
-                Y_pred_trans = np.expm1(inverse_helper(Y_pred_scaled_t, inv_scaler))
-
-                mae_trans = mean_absolute_error(Y_test_actual.flatten(), Y_pred_trans.flatten())
-                rmse_trans = np.sqrt(mean_squared_error(Y_test_actual.flatten(), Y_pred_trans.flatten()))
-                
-                st.metric("MAE", f"{mae_trans:.2f}", delta_color="inverse")
-                st.metric("RMSE", f"{rmse_trans:.2f}", delta_color="inverse")
-
-            # --- Visualization ---
-            st.write("---")
-            st.subheader("Visual Comparison")
-            
-            sample_idx = random.randint(0, len(Y_test_actual) - 1)
-            
-            fig, ax = plt.subplots(1, 2, figsize=(15, 6))
-            
-            # PM2.5
-            ax[0].plot(range(FORECAST_HORIZON), Y_test_actual[sample_idx, :, 0], label='Actual', marker='o', color='black')
-            ax[0].plot(range(FORECAST_HORIZON), Y_pred_lstm[sample_idx, :, 0], label='LSTM', linestyle='--', color='red')
-            ax[0].plot(range(FORECAST_HORIZON), Y_pred_trans[sample_idx, :, 0], label='Transformer', linestyle='--', color='green')
-            ax[0].set_title(f"PM2.5 Forecast (Test Sample #{sample_idx})")
-            ax[0].set_ylabel("µg/m³")
-            ax[0].set_xlabel("Days Ahead")
-            ax[0].legend()
-            ax[0].grid(True, alpha=0.3)
-
-            # PM10
-            ax[1].plot(range(FORECAST_HORIZON), Y_test_actual[sample_idx, :, 1], label='Actual', marker='o', color='black')
-            ax[1].plot(range(FORECAST_HORIZON), Y_pred_lstm[sample_idx, :, 1], label='LSTM', linestyle='--', color='red')
-            ax[1].plot(range(FORECAST_HORIZON), Y_pred_trans[sample_idx, :, 1], label='Transformer', linestyle='--', color='green')
-            ax[1].set_title(f"PM10 Forecast (Test Sample #{sample_idx})")
-            ax[1].set_xlabel("Days Ahead")
-            ax[1].legend()
-            ax[1].grid(True, alpha=0.3)
-            
-            st.pyplot(fig)
-            
-        else:
-            st.error("Insufficient data for this city to train the models.")
     else:
-        st.write("👈 Upload your 'city_hour.csv' and click 'Run Models' in the sidebar to start!")
+        st.info("👈 Select a city and click 'Generate Forecast'")
