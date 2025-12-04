@@ -86,13 +86,15 @@ def load_artifacts():
 # ==========================================
 # 3. METRIC CALCULATION HELPERS
 # ==========================================
+# ... (Imports remain the same) ...
+
+# UPDATE THIS FUNCTION
 @st.cache_data
 def calculate_global_accuracy(_model, df, _encoders):
-    # Prepare minimal data for global accuracy check
+    # 1. Prepare Data
     df['Datetime'] = pd.to_datetime(df['Datetime'])
     df['AQI_Calculated'] = df.apply(calculate_full_aqi, axis=1)
     
-    # Simple median fill + Safety Fill
     for col in POLLUTANTS + ['AQI_Calculated']:
         df[col] = df.groupby('City')[col].transform(lambda x: x.fillna(x.median()))
     df.fillna(0, inplace=True)
@@ -105,23 +107,23 @@ def calculate_global_accuracy(_model, df, _encoders):
     
     df['AQI_Target'] = df['AQI_Calculated'].apply(aqi_to_category)
     
-    # Group by City/Date
     df['Date'] = df['Datetime'].dt.date
     daily = df.groupby(['City', 'Date']).agg({
         **{p: 'mean' for p in POLLUTANTS},
         'AQI_Target': lambda x: x.value_counts().index[0]
     }).reset_index()
+    
     daily['Date'] = pd.to_datetime(daily['Date'])
     daily['DayOfWeek'] = daily['Date'].dt.dayofweek
 
-    # Feature Engineering (Fast Version)
+    # Feature Engineering
     for p in POLLUTANTS:
         daily[f'{p}_lag1'] = daily.groupby('City')[p].shift(1)
         daily[f'{p}_roll7'] = daily.groupby('City')[p].transform(lambda x: x.rolling(7, min_periods=1).mean().shift(1))
     
     daily.dropna(inplace=True)
     
-    # Sample 20% for testing speed
+    # 2. Test Split (20%)
     _, test_df = train_test_split(daily, test_size=0.2, random_state=42, stratify=daily['AQI_Target'])
     
     features = []
@@ -131,13 +133,28 @@ def calculate_global_accuracy(_model, df, _encoders):
     X = test_df[features].copy()
     y = test_df['AQI_Target'].values
     
-    # Encode
     for col in ['City', 'DayOfWeek']:
         if col in _encoders:
             X[col] = _encoders[col].transform(X[col])
             
     y_pred = _model.predict(X)
-    return accuracy_score(y, y_pred)
+    
+    # 3. Calculate Overall Accuracy
+    acc = accuracy_score(y, y_pred)
+    
+    # 4. Calculate Class-Wise Report
+    report_dict = classification_report(y, y_pred, output_dict=True, zero_division=0)
+    
+    # Convert to clean DataFrame
+    report_df = pd.DataFrame(report_dict).transpose()
+    # Filter only the classes (0,1,2,3) and rename them
+    classes_only = report_df.loc[['0', '1', '2', '3']]
+    classes_only.index = AQI_LABELS # Rename 0->Good, 1->Moderate...
+    
+    # Keep only relevant columns
+    classes_only = classes_only[['precision', 'recall', 'f1-score', 'support']]
+    
+    return acc, classes_only
 
 def calculate_city_metrics(city, df, _lstm, _trans, _scaler):
     city_df = df[df['City'] == city].copy()
@@ -291,13 +308,23 @@ with col1:
     st.markdown("---")
     st.markdown("### Model Performance")
     
-    # 1. Global Accuracy
+    # Check session state for both accuracy AND the report
     if 'global_acc' not in st.session_state:
-        with st.spinner("Calculating Accuracy..."):
-            st.session_state['global_acc'] = calculate_global_accuracy(cb_model, raw_df.copy(), encoders)
+        with st.spinner("Calculating Metrics..."):
+            # Unpack both return values
+            acc, report_df = calculate_global_accuracy(cb_model, raw_df.copy(), encoders)
+            st.session_state['global_acc'] = acc
+            st.session_state['class_report'] = report_df
     
-    st.metric("Global Classification Accuracy", f"{st.session_state['global_acc']*100:.2f}%")
-
+    st.metric("Global Accuracy", f"{st.session_state['global_acc']*100:.2f}%")
+    
+    with st.expander("See Class-wise Accuracy"):
+        # Format the dataframe to look like percentages
+        st.dataframe(
+            st.session_state['class_report'].style.format("{:.2%}", subset=['precision', 'recall', 'f1-score']),
+            use_container_width=True
+        )
+        
 with col2:
     if run_btn:
         daily_data = prep_data_for_prediction(raw_df, selected_city)
