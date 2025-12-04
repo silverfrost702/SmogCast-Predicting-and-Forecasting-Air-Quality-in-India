@@ -282,8 +282,8 @@ def get_dl_sequence(daily_df, scaler):
 # ==========================================
 # 5. MAIN APP UI
 # ==========================================
-st.title("⚡ SmogCast: Instant Air Quality AI")
-st.markdown("### Pre-trained Models: CatBoost (Status) | LSTM & Transformer (Forecast)")
+st.title("⚡ SmogCast: Predicting and Forecasting Air Quality in India")
+st.markdown("### Real-Time Air Quality Insights & 7-Day Predictive Trends using CatBoost, LSTM & Transformers")
 
 # Load Everything
 with st.spinner("Loading AI Brains..."):
@@ -392,4 +392,4 @@ with col2:
             fig_pm10.update_layout(title=f"PM10 Forecast", yaxis_title="µg/m³", template="plotly_dark")
             st.plotly_chart(fig_pm10, use_container_width=True)
     else:
-        st.info("👈 Select a city and click 'Generate Forecast'")
+        st.info(" Select a city from the dropdown and click 'Generate Forecast'")
