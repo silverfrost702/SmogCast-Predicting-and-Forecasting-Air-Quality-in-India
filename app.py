@@ -270,8 +270,8 @@ def get_dl_sequence(daily_df, scaler):
 # ==========================================
 # 5. MAIN APP UI
 # ==========================================
-st.title("⚡ Real-Time Air Quality Insights & 7-Day Predictive Trends")
-st.markdown("### Powered by Advanced AI: CatBoost, LSTM & Transformers")
+st.title("⚡ SmogCast - Predicting and Forecasting Air Quality in India")
+st.markdown("### Real-Time Air Quality Insights & 7-Day Predictive Trends using CatBoost, LSTM & Transformers")
 
 # Load Everything
 with st.spinner("Loading AI Brains..."):
