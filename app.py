@@ -26,9 +26,9 @@ st.write("**v4.0 - Fast & Fixed (Epochs=1, Grouping Fixed)**")
 FILE_PATH = 'city_hour.csv' 
 FORECAST_HORIZON = 7 
 SEQUENCE_LENGTH = 45 
-BATCH_SIZE = 32
+BATCH_SIZE = 16
 # SPEED UPDATE: Epochs set to 1 for maximum speed as requested
-EPOCHS = 15 
+EPOCHS = 5 
 RANDOM_SEED = 42
 POLLUTANTS = ['PM2.5', 'PM10', 'NO', 'NO2', 'NOx', 'NH3', 'CO', 'SO2', 'O3', 'Benzene', 'Toluene', 'Xylene']
 CAT_FEATURES = ['City'] 
