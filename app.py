@@ -14,21 +14,23 @@ from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from imblearn.over_sampling import SMOTE
 import warnings
 import random
+import gc # Garbage Collector for memory management
 
 # Suppress warnings
 warnings.filterwarnings('ignore')
 
 # --- Streamlit Page Config ---
 st.set_page_config(page_title="Air Quality Forecasting AI", layout="wide")
-st.write("**v4.0 - Fast & Fixed (Epochs=1, Grouping Fixed)**") 
+st.write("**v5.0 - Stable Lite Version (Memory Leak Fixed)**") 
 
 # --- Configuration Constants ---
 FILE_PATH = 'city_hour.csv' 
 FORECAST_HORIZON = 7 
 SEQUENCE_LENGTH = 45 
-BATCH_SIZE = 16
-# SPEED UPDATE: Epochs set to 1 for maximum speed as requested
-EPOCHS = 5 
+# MEMORY FIX 1: Reduced Batch Size (Smaller chunks = Less RAM)
+BATCH_SIZE = 16 
+# MEMORY FIX 2: Low Epochs for Cloud Stability
+EPOCHS = 10 
 RANDOM_SEED = 42
 POLLUTANTS = ['PM2.5', 'PM10', 'NO', 'NO2', 'NOx', 'NH3', 'CO', 'SO2', 'O3', 'Benzene', 'Toluene', 'Xylene']
 CAT_FEATURES = ['City'] 
@@ -78,7 +80,7 @@ def calculate_full_aqi(row):
     return max(sub_indices) if sub_indices else 0.0
 
 # ==============================================================================
-# Cached Data Processing Functions (FIXED)
+# Cached Data Processing Functions (ROBUST)
 # ==============================================================================
 
 @st.cache_data
@@ -98,7 +100,7 @@ def prepare_classification_data(df):
     for col in POLLUTANTS + ['AQI_Calculated']:
         df[col] = df.groupby('City')[col].transform(lambda x: x.fillna(x.median()))
     
-    # 2. Safety Fill
+    # 2. Safety Fill (Prevents Dropna from killing cities)
     df.fillna(0, inplace=True) 
     
     def aqi_to_category(aqi):
@@ -109,8 +111,7 @@ def prepare_classification_data(df):
         
     df['AQI_Target'] = df['AQI_Calculated'].apply(aqi_to_category)
     
-    # --- MAJOR FIX: Group by City AND Date ---
-    # This prevents Delhi data from being merged with other cities
+    # 3. Proper Grouping (City + Date)
     df['Date'] = df['Datetime'].dt.date
     daily_df = df.groupby(['City', 'Date']).agg({
         **{p: 'mean' for p in POLLUTANTS},
@@ -182,7 +183,7 @@ def prepare_forecasting_data(df, target_city):
     return X_train, X_val, X_test, Y_train, Y_val, Y_test, dummy_inverse_scaler
 
 # ==============================================================================
-# Model Training
+# Model Training (MEMORY SAFE)
 # ==============================================================================
 
 @st.cache_resource
@@ -232,10 +233,16 @@ def train_classification_model(daily_df, lag_features):
 
 @st.cache_resource
 def train_lstm(_X_train, _Y_train, _X_val, _Y_val, input_shape):
+    # MEMORY FIX 3: Clear old sessions before training new ones
+    tf.keras.backend.clear_session()
+    gc.collect()
+
     model = Sequential([
-        Bidirectional(LSTM(units=128, return_sequences=True), input_shape=input_shape), 
+        # MEMORY FIX 4: Reduced units (64) to save RAM
+        Bidirectional(LSTM(units=64, return_sequences=True), input_shape=input_shape), 
         Dropout(0.3),
-        Bidirectional(LSTM(units=64)), 
+        # MEMORY FIX 5: Reduced units (32)
+        Bidirectional(LSTM(units=32)), 
         Dropout(0.3),
         Dense(FORECAST_HORIZON * 2) 
     ])
@@ -248,13 +255,21 @@ def train_lstm(_X_train, _Y_train, _X_val, _Y_val, input_shape):
 
 @st.cache_resource
 def train_transformer(_X_train, _Y_train, _X_val, _Y_val, input_shape):
+    # MEMORY FIX 6: Clear session again for the second model
+    tf.keras.backend.clear_session()
+    gc.collect()
+
     seq_len, d_model = input_shape
     inputs = Input(shape=input_shape)
     x = PositionalEncoding(seq_len, d_model)(inputs)
-    attn_output = MultiHeadAttention(num_heads=4, key_dim=64)(x, x)
+    
+    # MEMORY FIX 7: Reduced key_dim and number of heads
+    attn_output = MultiHeadAttention(num_heads=2, key_dim=32)(x, x)
     x = attn_output + x
     x = Normalization(axis=-1)(x)
-    ffn_output = Dense(256, activation='relu')(x)
+    
+    # MEMORY FIX 8: Reduced dense layer size
+    ffn_output = Dense(128, activation='relu')(x)
     ffn_output = Dense(d_model)(ffn_output)
     x = ffn_output + x
     x = Normalization(axis=-1)(x)
