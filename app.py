@@ -268,7 +268,39 @@ def get_dl_sequence(daily_df, scaler):
     return np.expand_dims(data_scaled, axis=0)
 
 # ==========================================
-# 5. MAIN APP UI
+# 5. VISUALIZATION FUNCTIONS (NEW)
+# ==========================================
+def get_health_advice(status):
+    advice = {
+        'Good/Satis': "✅ **Safe:** Air is clean. Perfect for outdoor activities!",
+        'Moderate': "⚠️ **Caution:** Sensitive individuals should avoid prolonged outdoor exertion.",
+        'Poor': "😷 **Warning:** Wear a mask. Avoid outdoor jogging or exercise.",
+        'Very Poor/Severe': "⛔ **DANGER:** Stay indoors. Keep windows closed. Run air purifiers."
+    }
+    return advice.get(status, "No specific advice available.")
+
+def plot_aqi_gauge(pm25_val):
+    fig = go.Figure(go.Indicator(
+        mode = "gauge+number",
+        value = pm25_val,
+        domain = {'x': [0, 1], 'y': [0, 1]},
+        title = {'text': "Current PM2.5 Level"},
+        gauge = {
+            'axis': {'range': [None, 500]},
+            'bar': {'color': "darkblue"},
+            'steps' : [
+                {'range': [0, 50], 'color': "#00e400"},
+                {'range': [50, 100], 'color': "#ffff00"},
+                {'range': [100, 250], 'color': "#ff7e00"},
+                {'range': [250, 500], 'color': "#ff0000"}],
+            'threshold' : {'line': {'color': "red", 'width': 4}, 'thickness': 0.75, 'value': pm25_val}
+        }
+    ))
+    fig.update_layout(height=250, margin=dict(l=20,r=20,t=0,b=0))
+    return fig
+
+# ==========================================
+# 6. MAIN APP UI
 # ==========================================
 st.title("⚡ SmogCast - Air Quality in India")
 st.markdown("### Real-Time Air Quality Insights & 7-Day Predictive Trends using CatBoost, LSTM & Transformers")
@@ -320,13 +352,12 @@ with col2:
     if run_btn:
         daily_data = prep_data_for_prediction(raw_df, selected_city)
         
-        # --- CALCULATE LOCAL METRICS (UPDATED UI) ---
+        # --- CALCULATE LOCAL METRICS ---
         with st.spinner(f"Evaluating model on {selected_city} data..."):
             lstm_metrics, trans_metrics = calculate_city_metrics(selected_city, raw_df, lstm_model, trans_model, scaler)
 
         if lstm_metrics:
              st.subheader(f"Forecast Error Metrics for {selected_city}")
-             # 4 Columns for clear visibility of RMSE
              m1, m2, m3, m4 = st.columns(4)
              m1.metric("LSTM MAE", f"{lstm_metrics[0]:.2f}", help="Mean Absolute Error (Average Deviation)")
              m2.metric("LSTM RMSE", f"{lstm_metrics[1]:.2f}", help="Root Mean Squared Error (Penalizes Large Errors)")
@@ -338,19 +369,32 @@ with col2:
         if len(daily_data) < SEQUENCE_LENGTH:
             st.warning(f"Not enough historical data for {selected_city}.")
         else:
-            # 1. Classification
+            # 1. Classification & Gauge (Improved Layout)
             cat_input = get_catboost_features(daily_data, encoders, selected_city)
             if cat_input is not None:
                 pred_class = cb_model.predict(cat_input)[0][0]
                 status = AQI_LABELS[pred_class]
-                colors = {'Good/Satis': '#00e400', 'Moderate': '#ffff00', 'Poor': '#ff7e00', 'Very Poor/Severe': '#ff0000'}
-                c = colors.get(status, '#ffffff')
-                st.markdown(f"""
-                <div style="padding: 20px; background-color: {c}; border-radius: 10px; color: black; text-align: center; margin-bottom: 20px;">
-                    <h2 style="margin:0;">Current Status: {status}</h2>
-                    <p style="margin:0;">Based on latest available data pattern</p>
-                </div>
-                """, unsafe_allow_html=True)
+                
+                # Get current PM2.5 for gauge (Using last known value)
+                current_pm25 = daily_data['PM2.5'].iloc[-1]
+                
+                # Two Columns: Status Box vs Gauge
+                c1, c2 = st.columns([2, 1])
+                
+                with c1:
+                    colors = {'Good/Satis': '#00e400', 'Moderate': '#ffff00', 'Poor': '#ff7e00', 'Very Poor/Severe': '#ff0000'}
+                    c = colors.get(status, '#ffffff')
+                    
+                    st.markdown(f"""
+                    <div style="padding: 15px; background-color: {c}; border-radius: 10px; color: black; margin-bottom: 10px;">
+                        <h2 style="margin:0;">Status: {status}</h2>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    st.info(f"💡 **Recommendation:** {get_health_advice(status)}")
+                
+                with c2:
+                    st.plotly_chart(plot_aqi_gauge(current_pm25), use_container_width=True)
             
             # 2. Forecasting
             seq_input = get_dl_sequence(daily_data, scaler)
@@ -380,4 +424,4 @@ with col2:
             fig_pm10.update_layout(title=f"PM10 Forecast", yaxis_title="µg/m³", template="plotly_dark")
             st.plotly_chart(fig_pm10, use_container_width=True)
     else:
-        st.info("⇐ Select a city and click 'Generate Forecast'")
+        st.info("👈 Select a city and click 'Generate Forecast'")
