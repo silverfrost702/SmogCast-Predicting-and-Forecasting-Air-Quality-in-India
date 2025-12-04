@@ -414,43 +414,16 @@ with col2:
             
             days = [f"Day +{i+1}" for i in range(7)]
             
-            # Create two columns to display graphs side-by-side
-            g1, g2 = st.columns(2)
+            fig_pm25 = go.Figure()
+            fig_pm25.add_trace(go.Scatter(x=days, y=lstm_final[:, 0], mode='lines+markers', name='Bi-LSTM', line=dict(color='red', width=2)))
+            fig_pm25.add_trace(go.Scatter(x=days, y=trans_final[:, 0], mode='lines+markers', name='Transformer', line=dict(color='green', width=2, dash='dot')))
+            fig_pm25.update_layout(title=f"PM2.5 Forecast", yaxis_title="µg/m³", template="plotly_dark")
+            st.plotly_chart(fig_pm25, use_container_width=True)
             
-            with g1:
-                fig_pm25 = go.Figure()
-                fig_pm25.add_trace(go.Scatter(x=days, y=lstm_final[:, 0], mode='lines+markers', name='Bi-LSTM', line=dict(color='red', width=2)))
-                fig_pm25.add_trace(go.Scatter(x=days, y=trans_final[:, 0], mode='lines+markers', name='Transformer', line=dict(color='green', width=2, dash='dot')))
-                fig_pm25.update_layout(
-                    title=f"PM2.5 Forecast", 
-                    yaxis_title="µg/m³", 
-                    template="plotly_dark", 
-                    margin=dict(l=20, r=20, t=40, b=20), 
-                    height=350,
-                    xaxis=dict(showgrid=True, gridcolor='rgba(128, 128, 128, 0.2)'),
-                    yaxis=dict(showgrid=True, gridcolor='rgba(128, 128, 128, 0.2)'),
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    paper_bgcolor='rgba(0,0,0,0)'
-                )
-                fig_pm25.add_shape(type="rect", xref="paper", yref="paper", x0=0, y0=0, x1=1, y1=1, line=dict(color="rgba(255, 255, 255, 0.3)", width=1))
-                st.plotly_chart(fig_pm25, use_container_width=True)
-            
-            with g2:
-                fig_pm10 = go.Figure()
-                fig_pm10.add_trace(go.Scatter(x=days, y=lstm_final[:, 1], mode='lines+markers', name='Bi-LSTM', line=dict(color='red', width=2)))
-                fig_pm10.add_trace(go.Scatter(x=days, y=trans_final[:, 1], mode='lines+markers', name='Transformer', line=dict(color='green', width=2, dash='dot')))
-                fig_pm10.update_layout(
-                    title=f"PM10 Forecast", 
-                    yaxis_title="µg/m³", 
-                    template="plotly_dark", 
-                    margin=dict(l=20, r=20, t=40, b=20), 
-                    height=350,
-                    xaxis=dict(showgrid=True, gridcolor='rgba(128, 128, 128, 0.2)'),
-                    yaxis=dict(showgrid=True, gridcolor='rgba(128, 128, 128, 0.2)'),
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    paper_bgcolor='rgba(0,0,0,0)'
-                )
-                fig_pm10.add_shape(type="rect", xref="paper", yref="paper", x0=0, y0=0, x1=1, y1=1, line=dict(color="rgba(255, 255, 255, 0.3)", width=1))
-                st.plotly_chart(fig_pm10, use_container_width=True)
+            fig_pm10 = go.Figure()
+            fig_pm10.add_trace(go.Scatter(x=days, y=lstm_final[:, 1], mode='lines+markers', name='Bi-LSTM', line=dict(color='red', width=2)))
+            fig_pm10.add_trace(go.Scatter(x=days, y=trans_final[:, 1], mode='lines+markers', name='Transformer', line=dict(color='green', width=2, dash='dot')))
+            fig_pm10.update_layout(title=f"PM10 Forecast", yaxis_title="µg/m³", template="plotly_dark")
+            st.plotly_chart(fig_pm10, use_container_width=True)
     else:
         st.info("👈 Select a city and click 'Generate Forecast'")
