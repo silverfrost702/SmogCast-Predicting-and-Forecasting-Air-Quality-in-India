@@ -354,12 +354,10 @@ with col2:
                 # 2. Calculation (Raw Number)
                 calculated_aqi = calculate_full_aqi(daily_data.iloc[-1])
                 
-                # --- SYNC LOGIC: Force Gauge to match the Predicted Category ---
                 # Define bounds for the predicted class (0=0-100, 1=101-200, 2=201-300, 3=301-500)
                 bounds = {0: (0, 100), 1: (101, 200), 2: (201, 300), 3: (301, 500)}
                 min_b, max_b = bounds[pred_class]
                 
-                # Clamp the calculated AQI so it doesn't visually contradict the text
                 if calculated_aqi < min_b: display_aqi = min_b
                 elif calculated_aqi > max_b: display_aqi = max_b
                 else: display_aqi = calculated_aqi
