@@ -325,6 +325,78 @@ with col1:
             st.dataframe(st.session_state['class_report'].style.format("{:.2%}", subset=['precision', 'recall', 'f1-score']), use_container_width=True)
         else:
             st.write("Report not available.")
+        
+        # --- Additional Visual Insights (Dynamic) ---
+    st.markdown("---")
+    st.markdown("### Additional Visual Insights")
+
+    # Filter data for selected city
+    city_df = raw_df[raw_df['City'] == selected_city].copy()
+    city_df['Datetime'] = pd.to_datetime(city_df['Datetime'])
+    city_df['AQI_Calculated'] = city_df.apply(calculate_full_aqi, axis=1)
+
+    if not city_df.empty:
+
+        # --- 1. City-wise Daily AQI Trend (Line Chart) ---
+        st.markdown("#### Daily AQI Trend")
+        daily_aqi = city_df.groupby(city_df['Datetime'].dt.date)['AQI_Calculated'].mean().reset_index()
+        fig_trend = go.Figure()
+        fig_trend.add_trace(go.Scatter(
+            x=daily_aqi['Datetime'],
+            y=daily_aqi['AQI_Calculated'],
+            mode='lines',
+            line=dict(color='dodgerblue', width=2),
+            name='Daily AQI'
+        ))
+        fig_trend.update_layout(
+            height=250,
+            margin=dict(l=0, r=0, t=30, b=0),
+            title=f"{selected_city} – Recent AQI Trend",
+            yaxis_title="AQI",
+            xaxis_title=None,
+            template="plotly_dark"
+        )
+        st.plotly_chart(fig_trend, use_container_width=True)
+
+        # --- 2. Pollutant Composition for Selected City (Pie Chart) ---
+        st.markdown("#### Pollutant Composition")
+        avg_pollutants_city = city_df[POLLUTANTS].mean().sort_values(ascending=False).head(6)
+        fig_pie = go.Figure(data=[
+            go.Pie(labels=avg_pollutants_city.index,
+                   values=avg_pollutants_city.values,
+                   hole=.4)
+        ])
+        fig_pie.update_layout(
+            height=250,
+            title=f"Top Pollutants in {selected_city}",
+            template="plotly_dark"
+        )
+        st.plotly_chart(fig_pie, use_container_width=True)
+
+        # --- 3. Model Comparison Snapshot (Static Summary) ---
+        st.markdown("#### Model Performance Comparison")
+        model_perf = pd.DataFrame({
+            'Model': ['CatBoost (Classification)', 'Bi-LSTM (Forecast)', 'Transformer (Forecast)'],
+            'Metric Score': [92.39, 89.5, 87.2]
+        })
+        fig_perf = go.Figure()
+        fig_perf.add_trace(go.Bar(
+            x=model_perf['Model'],
+            y=model_perf['Metric Score'],
+            marker_color=['#2ca02c', '#d62728', '#9467bd']
+        ))
+        fig_perf.update_layout(
+            height=250,
+            title="Overall Model Performance (%)",
+            yaxis_title="Score (%)",
+            xaxis_title=None,
+            template="plotly_dark"
+        )
+        st.plotly_chart(fig_perf, use_container_width=True)
+
+    else:
+        st.info(f"No data available for {selected_city}.")
+
 
 with col2:
     if run_btn:
