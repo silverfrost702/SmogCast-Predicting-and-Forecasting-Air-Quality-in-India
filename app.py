@@ -358,7 +358,7 @@ with col1:
         st.plotly_chart(fig_trend, use_container_width=True)
 
         # --- 2. Pollutant Composition for Selected City (Pie Chart) ---
-        st.markdown("<h4 style='margin-bottom:-10px;'>Pollutant Composition</h4>", unsafe_allow_html=True)
+        st.markdown("#### Pollutant Composition")
         avg_pollutants_city = city_df[POLLUTANTS].mean().sort_values(ascending=False).head(6)
         fig_pie = go.Figure(data=[
             go.Pie(
@@ -368,12 +368,20 @@ with col1:
             )
         ])
         fig_pie.update_layout(
-            height=270,  # slightly larger
+            height=250,
             width=420,
-            title=f"Top Pollutants in {selected_city}",
+            title={
+                'text': f"Top Pollutants in {selected_city}",
+                'x': 0.5,  # centers title
+                'xanchor': 'center',
+                'yanchor': 'top',
+                'font': {'size': 14}
+            },
+            margin=dict(l=0, r=0, t=10, b=0),  # ↓ reduces top space
             template="plotly_dark"
         )
         st.plotly_chart(fig_pie, use_container_width=True)
+
 
     else:
         st.info(f"No data available for {selected_city}.")
