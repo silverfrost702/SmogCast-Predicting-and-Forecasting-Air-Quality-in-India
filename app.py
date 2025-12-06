@@ -360,27 +360,42 @@ with col1:
         # --- 2. Pollutant Composition for Selected City (Pie Chart) ---
         st.markdown("#### Pollutant Composition")
         avg_pollutants_city = city_df[POLLUTANTS].mean().sort_values(ascending=False).head(6)
+
         fig_pie = go.Figure(data=[
             go.Pie(
                 labels=avg_pollutants_city.index,
                 values=avg_pollutants_city.values,
-                hole=.4
+                hole=0.45,
+                textinfo='label+percent',
+                textfont=dict(size=13),
+                marker=dict(line=dict(color='#000000', width=1))
             )
         ])
+
         fig_pie.update_layout(
-            height=250,
+            height=280,
             width=420,
+            margin=dict(l=10, r=10, t=30, b=0),
             title={
                 'text': f"Top Pollutants in {selected_city}",
-                'x': 0.5,  # centers title
+                'x': 0.5,
                 'xanchor': 'center',
                 'yanchor': 'top',
-                'font': {'size': 14}
+                'font': {'size': 15}
             },
-            margin=dict(l=0, r=0, t=10, b=0),  # ↓ reduces top space
+            legend=dict(
+                orientation="h",        # horizontal legend
+                yanchor="bottom",
+                y=-0.25,                # moves legend below chart
+                xanchor="center",
+                x=0.5,
+                font=dict(size=11)
+            ),
             template="plotly_dark"
         )
+
         st.plotly_chart(fig_pie, use_container_width=True)
+
 
 
     else:
