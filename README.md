@@ -8,7 +8,7 @@ It performs **real-time AQI classification** and **7-day forecasting** of partic
 
 ---
 
-## 📌 Key Features
+## Key Features
 
 - **Real-Time AQI Classification** (Good → Severe)
 - **7-Day Forecasting** of PM2.5 & PM10
@@ -189,7 +189,7 @@ This project was developed as part of
 5. Kaggle: *Air Quality Data in India (2015–2020)*
 
 ---
-
+```md
 ## Author
 
 **Anuva Negi**
