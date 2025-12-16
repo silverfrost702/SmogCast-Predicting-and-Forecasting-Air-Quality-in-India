@@ -1,9 +1,3 @@
-Absolutely — here is the **full, final, copy-paste–ready `README.md`**, updated to include the **dashboard preview + all visual sections**, cleanly structured and **GitHub / recruiter optimized**.
-
-You can paste this **directly into your `README.md`** and it will render perfectly once the images are inside the `assets/` folder.
-
----
-
 ````md
 # SmogCast: Predicting & Forecasting Air Quality in India
 
