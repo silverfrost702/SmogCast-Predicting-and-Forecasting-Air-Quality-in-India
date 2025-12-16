@@ -43,7 +43,7 @@ SmogCast-Predicting-and-Forecasting-Air-Quality-in-India/
 │   ├── daily_aqi_trend.png
 │   └── pollutant_composition.png
 └── README.md
-
+```
 
 ---
 
@@ -194,5 +194,4 @@ This project was developed as part of
 
 **Anuva Negi**
 MS in Data Science — University of Texas at Arlington
-
 ```
