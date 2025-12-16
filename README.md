@@ -1,14 +1,14 @@
-# SmogCast: Predicting & Forecasting Air Quality in India
+# 1. SmogCast: Predicting & Forecasting Air Quality in India
 
 **SmogCast** is an end-to-end air quality analytics and forecasting system that transforms raw air-pollution sensor data into **actionable insights**.  
 It performs **real-time AQI classification** and **7-day forecasting** of particulate matter (PM2.5 & PM10) using a hybrid machine-learning and deep-learning pipeline.
 
- **Live App:** https://smogcast.streamlit.app/  
- **Demo Video:** https://youtu.be/UyUvtBF0N3Q  
+**Live App:** https://smogcast.streamlit.app/  
+**Demo Video:** https://youtu.be/UyUvtBF0N3Q  
 
 ---
 
-## Key Features
+## 2. Key Features
 
 - **Real-Time AQI Classification** (Good → Severe)
 - **7-Day Forecasting** of PM2.5 & PM10
@@ -22,7 +22,7 @@ It performs **real-time AQI classification** and **7-day forecasting** of partic
 
 ---
 
-## Repository Structure
+## 3. Repository Structure
 
 ```bash
 SmogCast-Predicting-and-Forecasting-Air-Quality-in-India/
@@ -43,31 +43,31 @@ SmogCast-Predicting-and-Forecasting-Air-Quality-in-India/
 │   ├── daily_aqi_trend.png
 │   └── pollutant_composition.png
 └── README.md
-```
+````
 
 ---
 
-## Streamlit Dashboard Preview
+## 4. Streamlit Dashboard Preview
 
 The SmogCast dashboard provides an intuitive interface for monitoring **current air quality** and **future pollution trends** across major Indian cities.
 
-### Full Dashboard Overview
+### 4.1 Full Dashboard Overview
 
 ![SmogCast Dashboard Overview](assets/dashboard_overview.png)
 
 ---
 
-## Key Visual Components
+## 5. Key Visual Components
 
-### AQI Classification & Severity Gauge
+### 5.1 AQI Classification & Severity Gauge
 
-This gauge visualizes the **current AQI category** mapped to CPCB color-coded breakpoints (Green → Maroon), allowing instant assessment of air quality severity. Adjecent to it we have the AQI classification label along with recommendation message.
+This gauge visualizes the **current AQI category** mapped to CPCB color-coded breakpoints (Green → Maroon), allowing instant assessment of air quality severity. Adjacent to it, the AQI classification label and recommendation message provide immediate health guidance.
 
 ![AQI Gauge](assets/aqi_label_gauge.png)
 
 ---
 
-### 7-Day Forecast (Bi-LSTM vs Transformer)
+### 5.2 7-Day Forecast (Bi-LSTM vs Transformer)
 
 Compares forecasting behavior across deep-learning models.
 The **Bi-LSTM** produces smoother, more stable trends, while the **Transformer** reacts more sharply to daily fluctuations.
@@ -76,7 +76,7 @@ The **Bi-LSTM** produces smoother, more stable trends, while the **Transformer**
 
 ---
 
-### Daily AQI Trend
+### 5.3 Daily AQI Trend
 
 Displays short-term AQI fluctuations for the selected city, revealing smog spikes, recovery phases, and temporal patterns.
 
@@ -84,7 +84,7 @@ Displays short-term AQI fluctuations for the selected city, revealing smog spike
 
 ---
 
-### Pollutant Composition
+### 5.4 Pollutant Composition
 
 Illustrates the relative contribution of dominant pollutants (PM2.5, PM10, NO₂, SO₂, etc.) to the city’s overall air quality.
 
@@ -92,9 +92,9 @@ Illustrates the relative contribution of dominant pollutants (PM2.5, PM10, NO₂
 
 ---
 
-## Methodology Overview
+## 6. Methodology Overview
 
-### 1️⃣ Data Processing Pipeline
+### 6.1 Data Processing Pipeline
 
 * **Hierarchical Imputation**
 
@@ -115,7 +115,7 @@ Illustrates the relative contribution of dominant pollutants (PM2.5, PM10, NO₂
 
 ---
 
-### 2️⃣ AQI Classification (CatBoost)
+### 6.2 AQI Classification (CatBoost)
 
 * Multi-class AQI prediction (Good → Severe)
 * Native handling of categorical city features
@@ -125,7 +125,7 @@ Illustrates the relative contribution of dominant pollutants (PM2.5, PM10, NO₂
 
 ---
 
-### 3️⃣ Forecasting Models
+### 6.3 Forecasting Models
 
 | Model                   | Strengths                                               |
 | ----------------------- | ------------------------------------------------------- |
@@ -138,7 +138,7 @@ Illustrates the relative contribution of dominant pollutants (PM2.5, PM10, NO₂
 
 ---
 
-## Running the App Locally
+## 7. Running the App Locally
 
 ```bash
 # Clone the repository
@@ -154,7 +154,7 @@ streamlit run app.py
 
 ---
 
-## Deployment Strategy
+## 8. Deployment Strategy
 
 * **Model Training:** Offline (GPU-based Google Colab)
 * **Inference:** Lightweight CPU-based inference
@@ -163,7 +163,7 @@ streamlit run app.py
 
 ---
 
-## Future Enhancements
+## 9. Future Enhancements
 
 * Integrate meteorological data (wind speed, humidity)
 * Hyperparameter tuning for Transformer
@@ -172,7 +172,7 @@ streamlit run app.py
 
 ---
 
-## Academic Context
+## 10. Academic Context
 
 This project was developed as part of
 **IE 6318 – Data Mining & Analytics**
@@ -180,7 +180,7 @@ This project was developed as part of
 
 ---
 
-## References
+## 11. References
 
 1. Central Pollution Control Board (CPCB), National Air Quality Index
 2. Prokhorenkova et al., *CatBoost: Unbiased Boosting with Categorical Features*, NeurIPS (2018)
@@ -190,7 +190,7 @@ This project was developed as part of
 
 ---
 
-## Author
+## 12. Author
 
 **Anuva Negi**
 MS in Data Science — University of Texas at Arlington
