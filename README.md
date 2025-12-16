@@ -53,7 +53,7 @@ SmogCast-Predicting-and-Forecasting-Air-Quality-in-India/
 
 ## 4. Streamlit Dashboard Preview
 
-The SmogCast dashboard provides an intuitive interface for monitoring **current air quality** and **future pollution trends** across major Indian cities. **Select the city** from the **dropdown** and in few minutes the stats for that city is visible on the dasboard.
+The SmogCast dashboard provides an intuitive interface for monitoring **current air quality** and **future pollution trends** across major Indian cities. **Select the city** from the **dropdown** and in few minutes the stats for that city is visible on the dashboard.
 
 ### 4.1 Full Dashboard Overview
 
