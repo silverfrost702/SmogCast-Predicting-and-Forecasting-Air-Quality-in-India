@@ -189,9 +189,8 @@ This project was developed as part of
 5. Kaggle: *Air Quality Data in India (2015–2020)*
 
 ---
-```md
+
 ## Author
 
 **Anuva Negi**
 MS in Data Science — University of Texas at Arlington
-```
