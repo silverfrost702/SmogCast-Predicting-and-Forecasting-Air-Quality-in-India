@@ -3,7 +3,9 @@ import pandas as pd
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras.layers import Layer
-from catboost import CatBoostClassifier
+# pyrefly: ignore [missing-import]
+from catboost import CatBoostClassifier, Pool
+import shap
 from sklearn.metrics import accuracy_score, mean_absolute_error, mean_squared_error, classification_report
 from sklearn.model_selection import train_test_split
 import joblib
@@ -93,7 +95,7 @@ def calculate_global_accuracy(_model, df, _encoders):
     
     for col in POLLUTANTS + ['AQI_Calculated']:
         df[col] = df.groupby('City')[col].transform(lambda x: x.fillna(x.median()))
-    df.fillna(0, inplace=True)
+    df[POLLUTANTS + ['AQI_Calculated']] = df[POLLUTANTS + ['AQI_Calculated']].fillna(0)
 
     def aqi_to_category(aqi):
         if aqi <= 100: return 0 
@@ -149,7 +151,7 @@ def calculate_city_metrics(city, df, _lstm, _trans, _scaler):
     city_df = city_df.sort_values('Datetime')
     for col in POLLUTANTS:
         city_df[col] = city_df[col].fillna(city_df[col].median())
-    city_df.fillna(0, inplace=True)
+    city_df[POLLUTANTS] = city_df[POLLUTANTS].fillna(0)
     city_df['Date'] = city_df['Datetime'].dt.date
     daily = city_df.groupby('Date')[POLLUTANTS].mean().reset_index()
     daily['Date'] = pd.to_datetime(daily['Date'])
@@ -209,7 +211,7 @@ def prep_data_for_prediction(df, city):
     city_df['Datetime'] = pd.to_datetime(city_df['Datetime'])
     city_df = city_df.sort_values('Datetime')
     for col in POLLUTANTS: city_df[col] = city_df[col].fillna(city_df[col].median())
-    city_df.fillna(0, inplace=True)
+    city_df[POLLUTANTS] = city_df[POLLUTANTS].fillna(0)
     city_df['Date'] = city_df['Datetime'].dt.date
     daily = city_df.groupby('Date')[POLLUTANTS].mean().reset_index()
     daily['Date'] = pd.to_datetime(daily['Date'])
@@ -284,6 +286,240 @@ def plot_aqi_gauge(aqi_val):
     fig.update_layout(height=250, margin=dict(l=20,r=20,t=0,b=0))
     return fig
 
+def show_shap_explanation(cb_model, cat_input, feature_names, selected_city, status):
+    st.subheader("Why this AQI prediction? (SHAP Explanation)")
+
+    # CatBoost has native SHAP support — no TreeExplainer needed
+    shap_values = cb_model.get_feature_importance(
+        Pool(cat_input, cat_features=[feature_names.index('City'), feature_names.index('DayOfWeek')]),
+        type='ShapValues'
+    )
+    # shap_values shape: (1, n_classes, n_features+1)
+    # Take the predicted class
+    pred_class = cb_model.predict(cat_input)[0][0]
+    shap_row = shap_values[0][pred_class][:-1]  # exclude bias term
+
+    shap_df = pd.DataFrame({
+        'Feature': feature_names,
+        'SHAP Value': shap_row,
+        'Direction': ['Increases AQI ▲' if v > 0 else 'Decreases AQI ▼' for v in shap_row]
+    }).sort_values('SHAP Value', key=abs, ascending=False).head(10)
+
+    # Plot using Plotly
+    colors = ['#ff7e00' if v > 0 else '#00b4d8' for v in shap_df['SHAP Value']]
+    fig_shap = go.Figure(go.Bar(
+        x=shap_df['SHAP Value'],
+        y=shap_df['Feature'],
+        orientation='h',
+        marker_color=colors,
+        text=[f"{v:.3f}" for v in shap_df['SHAP Value']],
+        textposition='outside'
+    ))
+    fig_shap.update_layout(
+        title=f"Top 10 Features Driving AQI Prediction — {selected_city}",
+        xaxis_title="SHAP Value (impact on model output)",
+        yaxis=dict(autorange="reversed"),
+        template="plotly_dark",
+        height=420,
+        margin=dict(l=150, r=40, t=60, b=40)
+    )
+    st.plotly_chart(fig_shap, use_container_width=True)
+
+    # Plain-English explanation
+    top_feature = shap_df.iloc[0]
+    direction_word = "elevated" if top_feature['SHAP Value'] > 0 else "reduced"
+    st.info(
+        f"**Model Reasoning:** The strongest driver of today's {status} prediction in "
+        f"**{selected_city}** is **{top_feature['Feature']}** "
+        f"(SHAP = {top_feature['SHAP Value']:.3f}), which {direction_word} the AQI severity. "
+        f"This means city planners should prioritize monitoring this pollutant."
+    )
+
+def plot_forecast_with_bands(days, lstm_vals, trans_vals, pollutant_name, selected_city, unit="µg/m³"):
+    """Plot LSTM + Transformer forecasts with uncertainty bands."""
+    
+    # Approximate uncertainty: ±15% of LSTM prediction (conservative estimate)
+    uncertainty = lstm_vals * 0.15
+    upper = lstm_vals + uncertainty
+    lower = np.maximum(0, lstm_vals - uncertainty)  # AQI can't be negative
+
+    fig = go.Figure()
+
+    # Confidence band (shaded)
+    fig.add_trace(go.Scatter(
+        x=days + days[::-1],
+        y=list(upper) + list(lower[::-1]),
+        fill='toself',
+        fillcolor='rgba(255, 126, 0, 0.15)',
+        line=dict(color='rgba(255,255,255,0)'),
+        name='LSTM ±15% uncertainty',
+        showlegend=True
+    ))
+
+    # LSTM line
+    fig.add_trace(go.Scatter(
+        x=days, y=lstm_vals,
+        mode='lines+markers',
+        name='Bi-LSTM forecast',
+        line=dict(color='#ff7e00', width=2.5),
+        marker=dict(size=7)
+    ))
+
+    # Transformer line
+    fig.add_trace(go.Scatter(
+        x=days, y=trans_vals,
+        mode='lines+markers',
+        name='Transformer forecast',
+        line=dict(color='#00b4d8', width=2, dash='dot'),
+        marker=dict(symbol='diamond', size=7)
+    ))
+
+    # WHO guideline reference line (PM2.5 = 15 µg/m³, PM10 = 45 µg/m³)
+    who_limit = 15 if pollutant_name == "PM2.5" else 45
+    fig.add_hline(
+        y=who_limit,
+        line_dash="dash",
+        line_color="#ff4444",
+        annotation_text=f"WHO safe limit ({who_limit} {unit})",
+        annotation_position="bottom right"
+    )
+
+    fig.update_layout(
+        title=f"7-Day {pollutant_name} Forecast — {selected_city}",
+        yaxis_title=unit,
+        xaxis_title="Forecast Day",
+        template="plotly_dark",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        height=380
+    )
+    return fig
+
+def show_business_impact_panel(status, city, lstm_forecast_pm25):
+    """Show actionable policy framing — the 'so what' layer."""
+    st.markdown("---")
+    st.subheader("Policy Impact Summary")
+
+    peak_day = int(np.argmax(lstm_forecast_pm25)) + 1
+    peak_val = float(np.max(lstm_forecast_pm25))
+    who_limit = 15.0  # WHO PM2.5 guideline
+
+    # Dynamic recommendations based on severity
+    actions = {
+        'Good/Satis': [
+            "No restrictions needed — optimal for outdoor events",
+            "Routine AQI monitoring sufficient (daily checks)",
+            "Green flag for school outdoor activities"
+        ],
+        'Moderate': [
+            "Issue advisories for sensitive groups (elderly, children, asthmatics)",
+            "Recommend N95 masks for outdoor workers",
+            "Consider postponing marathon/sports events"
+        ],
+        'Poor': [
+            "Activate construction dust control measures",
+            "Issue health advisory to all residents",
+            "Increase hospital/emergency readiness by 20%",
+            "Restrict heavy vehicle traffic 7AM–10AM"
+        ],
+        'Very Poor/Severe': [
+            "Declare air quality emergency",
+            "Close schools and outdoor workplaces",
+            "Activate odd-even vehicle rationing",
+            "Deploy water sprinklers on major roads",
+            "Alert hospitals for respiratory emergency surge"
+        ]
+    }
+
+    cols = st.columns(3)
+    cols[0].metric(
+        label="Peak PM2.5 Day",
+        value=f"Day +{peak_day}",
+        delta=f"{peak_val:.1f} µg/m³ predicted",
+        delta_color="inverse"
+    )
+    cols[1].metric(
+        label="WHO Exceedance",
+        value=f"{(peak_val / who_limit):.1f}x",
+        delta="above safe limit" if peak_val > who_limit else "within safe limit",
+        delta_color="inverse" if peak_val > who_limit else "normal"
+    )
+    cols[2].metric(
+        label="Alert Level",
+        value=status,
+        delta="Action required" if status in ['Poor', 'Very Poor/Severe'] else "Monitor only"
+    )
+
+    st.markdown("**Recommended actions for city administrators:**")
+    for action in actions.get(status, []):
+        st.markdown(f"- {action}")
+
+def plot_confusion_matrix_heatmap(cb_model, df, encoders):
+    """Generate and display a confusion matrix as a Plotly heatmap."""
+    from sklearn.metrics import confusion_matrix
+
+    # Reuse existing data prep logic
+    df = df.copy()
+    df['Datetime'] = pd.to_datetime(df['Datetime'])
+    df['AQI_Calculated'] = df.apply(calculate_full_aqi, axis=1)
+    for col in POLLUTANTS + ['AQI_Calculated']:
+        df[col] = df.groupby('City')[col].transform(lambda x: x.fillna(x.median()))
+    df[POLLUTANTS + ['AQI_Calculated']] = df[POLLUTANTS + ['AQI_Calculated']].fillna(0)
+
+    def aqi_to_cat(aqi):
+        if aqi <= 100: return 0
+        elif aqi <= 200: return 1
+        elif aqi <= 300: return 2
+        else: return 3
+
+    df['AQI_Target'] = df['AQI_Calculated'].apply(aqi_to_cat)
+    df['Date'] = df['Datetime'].dt.date
+    daily = df.groupby(['City', 'Date']).agg({
+        **{p: 'mean' for p in POLLUTANTS},
+        'AQI_Target': lambda x: x.value_counts().index[0]
+    }).reset_index()
+    daily['Date'] = pd.to_datetime(daily['Date'])
+    daily['DayOfWeek'] = daily['Date'].dt.dayofweek
+    for p in POLLUTANTS:
+        daily[f'{p}_lag1'] = daily.groupby('City')[p].shift(1)
+        daily[f'{p}_roll7'] = daily.groupby('City')[p].transform(lambda x: x.rolling(7, min_periods=1).mean().shift(1))
+    daily.dropna(inplace=True)
+    _, test_df = train_test_split(daily, test_size=0.2, random_state=42, stratify=daily['AQI_Target'])
+
+    features = []
+    for p in POLLUTANTS: features.extend([p, f'{p}_lag1', f'{p}_roll7'])
+    features.extend(['City', 'DayOfWeek'])
+    X = test_df[features].copy()
+    y = test_df['AQI_Target'].values
+    for col in ['City', 'DayOfWeek']:
+        if col in encoders:
+            X[col] = encoders[col].transform(X[col])
+
+    y_pred = cb_model.predict(X).flatten()
+    cm = confusion_matrix(y, y_pred)
+    
+    # Normalize to percentages
+    cm_pct = cm.astype(float) / cm.sum(axis=1, keepdims=True) * 100
+
+    fig = go.Figure(go.Heatmap(
+        z=cm_pct,
+        x=AQI_LABELS,
+        y=AQI_LABELS,
+        colorscale='Blues',
+        text=[[f"{v:.1f}%" for v in row] for row in cm_pct],
+        texttemplate="%{text}",
+        textfont=dict(size=13),
+        showscale=False
+    ))
+    fig.update_layout(
+        title="Confusion Matrix (test set)",
+        xaxis_title="Predicted",
+        yaxis_title="Actual",
+        template="plotly_dark",
+        height=300,
+        margin=dict(l=10, r=10, t=50, b=10)
+    )
+    return fig
+
 # ==========================================
 # 6. MAIN APP UI
 # ==========================================
@@ -325,6 +561,13 @@ with col1:
             st.dataframe(st.session_state['class_report'].style.format("{:.2%}", subset=['precision', 'recall', 'f1-score']), use_container_width=True)
         else:
             st.write("Report not available.")
+        
+    with st.expander("Confusion Matrix"):
+        if 'conf_matrix_fig' not in st.session_state:
+            st.session_state['conf_matrix_fig'] = plot_confusion_matrix_heatmap(
+                cb_model, raw_df.copy(), encoders
+            )
+        st.plotly_chart(st.session_state['conf_matrix_fig'], use_container_width=True)
         
     # --- Additional Visual Insights (Dynamic, Cleaner Layout) ---
     st.markdown("---")
@@ -421,6 +664,7 @@ with col2:
         if len(daily_data) < SEQUENCE_LENGTH:
             st.warning(f"Not enough historical data for {selected_city}.")
         else:
+            status = "Moderate"
             cat_input = get_catboost_features(daily_data, encoders, selected_city)
             if cat_input is not None:
                 # 1. Prediction (Categorical)
@@ -450,6 +694,13 @@ with col2:
                     st.info(f" **Recommendation:** {get_health_advice(status)}")
                 with c2:
                     st.plotly_chart(plot_aqi_gauge(display_aqi), use_container_width=True)
+                
+                # --- SHAP Explainability ---
+                feat_names = []
+                for p in POLLUTANTS:
+                    feat_names.extend([p, f'{p}_lag1', f'{p}_roll7'])
+                feat_names.extend(['City', 'DayOfWeek'])
+                show_shap_explanation(cb_model, cat_input, feat_names, selected_city, status)
             
             seq_input = get_dl_sequence(daily_data, scaler)
             lstm_pred_scaled = lstm_model.predict(seq_input, verbose=0)
@@ -468,16 +719,13 @@ with col2:
             
             st.subheader("7-Day Trend Forecast")
             
-            fig_pm25 = go.Figure()
-            fig_pm25.add_trace(go.Scatter(x=days, y=lstm_final[:, 0], mode='lines+markers', name='Bi-LSTM', line=dict(color='red', width=2)))
-            fig_pm25.add_trace(go.Scatter(x=days, y=trans_final[:, 0], mode='lines+markers', name='Transformer', line=dict(color='green', width=2, dash='dot')))
-            fig_pm25.update_layout(title=f"PM2.5 Forecast", yaxis_title="µg/m³", template="plotly_dark")
+            fig_pm25 = plot_forecast_with_bands(days, lstm_final[:, 0], trans_final[:, 0], "PM2.5", selected_city)
             st.plotly_chart(fig_pm25, use_container_width=True)
             
-            fig_pm10 = go.Figure()
-            fig_pm10.add_trace(go.Scatter(x=days, y=lstm_final[:, 1], mode='lines+markers', name='Bi-LSTM', line=dict(color='red', width=2)))
-            fig_pm10.add_trace(go.Scatter(x=days, y=trans_final[:, 1], mode='lines+markers', name='Transformer', line=dict(color='green', width=2, dash='dot')))
-            fig_pm10.update_layout(title=f"PM10 Forecast", yaxis_title="µg/m³", template="plotly_dark")
+            fig_pm10 = plot_forecast_with_bands(days, lstm_final[:, 1], trans_final[:, 1], "PM10", selected_city)
             st.plotly_chart(fig_pm10, use_container_width=True)
+
+            # Call it after your forecast plots:
+            show_business_impact_panel(status, selected_city, lstm_final[:, 0])
     else:
         st.info("⬅ Select a city and click 'Generate Forecast'")

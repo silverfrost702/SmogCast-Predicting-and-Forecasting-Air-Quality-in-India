@@ -6,3 +6,4 @@ scikit-learn
 catboost
 tensorflow-cpu
 imblearn
+shap

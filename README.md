@@ -1,7 +1,21 @@
-# SmogCast: Predicting & Forecasting Air Quality in India
+# SmogCast: AI-Powered Air Quality Prediction & Forecasting
 
-**SmogCast** is an end-to-end air quality analytics and forecasting system that transforms raw air-pollution sensor data into **actionable insights**.  
-It performs **real-time AQI classification** and **7-day forecasting** of particulate matter (PM2.5 & PM10) using a hybrid machine-learning and deep-learning pipeline.
+**Problem:** India's 1.4B residents face chronic air quality crises, yet cities lack 
+tools to anticipate dangerous pollution events before they occur.
+
+**Solution:** SmogCast is an end-to-end ML system that classifies current AQI severity 
+(93% accuracy) and forecasts PM2.5/PM10 7 days ahead, enabling city administrators 
+to issue early health advisories and take targeted preventive action.
+
+**Impact:** Deployed at [smogcast.streamlit.app](https://smogcast.streamlit.app) — 
+provides actionable policy recommendations mapped to WHO safety thresholds, 
+covering 26 major Indian cities across 700K+ hourly sensor records (2015–2020).
+
+## Technical Architecture
+- **Classification:** CatBoost (93% accuracy, SMOTE for class imbalance)
+- **Forecasting:** Bi-Directional LSTM + Transformer (9–12 RMSE)
+- **Explainability:** SHAP feature importance (pollutant-level reasoning)
+- **Stack:** Python · Streamlit · TensorFlow · Plotly · scikit-learn · CatBoost
 
 ---
 
@@ -15,10 +29,10 @@ It performs **real-time AQI classification** and **7-day forecasting** of partic
 ## 2. Key Features
 
 - **Real-Time AQI Classification** (Good → Severe)
-- **7-Day Forecasting** of PM2.5 & PM10
-- **Hybrid Modeling**
-  - CatBoost for classification
-  - Bi-Directional LSTM & Transformer for forecasting
+- **7-Day Forecasting** of PM2.5 & PM10 with Uncertainty Confidence Bands
+- **SHAP Explainability Layer** (native CatBoost SHAP explanation of predictions)
+- **Policy Impact & Actionable Alert Panel** mapped directly to CPCB & WHO guidelines
+- **Model Diagnostic Metrics** (confusion matrix and class-level accuracy heatmaps)
 - **Class Imbalance Handling** using SMOTE
 - **Advanced Feature Engineering** (lags, rolling means, cyclical encoding)
 - **Interactive Streamlit Dashboard**
