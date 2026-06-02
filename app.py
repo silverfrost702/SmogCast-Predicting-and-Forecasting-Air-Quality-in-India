@@ -403,6 +403,13 @@ def show_business_impact_panel(status, city, lstm_forecast_pm25):
     peak_val = float(np.max(lstm_forecast_pm25))
     who_limit = 15.0  # WHO PM2.5 guideline
 
+    # Override alert level if WHO exceedance is high despite Good/Satis classification
+    if peak_val > who_limit * 2 and status == 'Good/Satis':
+        effective_status = 'Moderate'
+        st.warning("⚠️ Note: PM2.5 forecast exceeds 2× WHO limit – elevated caution advised.")
+    else:
+        effective_status = status
+
     # Dynamic recommendations based on severity
     actions = {
         'Good/Satis': [
@@ -445,12 +452,12 @@ def show_business_impact_panel(status, city, lstm_forecast_pm25):
     )
     cols[2].metric(
         label="Alert Level",
-        value=status,
-        delta="Action required" if status in ['Poor', 'Very Poor/Severe'] else "Monitor only"
+        value=effective_status,
+        delta="Action required" if effective_status in ['Poor', 'Very Poor/Severe'] else "Monitor only"
     )
 
     st.markdown("**Recommended actions for city administrators:**")
-    for action in actions.get(status, []):
+    for action in actions.get(effective_status, []):
         st.markdown(f"- {action}")
 
 def plot_confusion_matrix_heatmap(cb_model, df, encoders):
